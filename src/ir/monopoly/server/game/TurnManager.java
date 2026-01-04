@@ -9,12 +9,14 @@ public class TurnManager {
     private GamePhase currentPhase;
     private int turnCounter;
     private int consecutiveDoubles = 0;
+    private boolean lastRollWasDoubles = false;
 
     public TurnManager(Player[] players) {
         this.players = players;
         this.currentPlayerIndex = 0;
         this.currentPhase = GamePhase.TURN_START;
         this.turnCounter = 1;
+        this.consecutiveDoubles = 0;
     }
 
     public void setPhase(GamePhase phase) {
@@ -29,7 +31,13 @@ public class TurnManager {
             case MOVE_AND_RESOLVE -> currentPhase = GamePhase.DECISION;
             case DECISION -> currentPhase = GamePhase.TURN_END;
             case TURN_END -> {
-                advanceToNextPlayer();
+                if (!lastRollWasDoubles) {
+                    advanceToNextPlayer();
+                    consecutiveDoubles = 0;
+                } else {
+                    consecutiveDoubles++;
+                    lastRollWasDoubles = false;
+                }
                 currentPhase = GamePhase.TURN_START;
             }
         }
@@ -44,7 +52,23 @@ public class TurnManager {
 
     public void passTurn() {
         advanceToNextPlayer();
+        consecutiveDoubles = 0;
+        lastRollWasDoubles = false;
         currentPhase = GamePhase.TURN_START;
+    }
+
+
+    public void registerDoubles() {
+        lastRollWasDoubles = true;
+    }
+
+    public boolean hasThreeConsecutiveDoubles() {
+        return consecutiveDoubles >= 2;
+    }
+
+    public void resetDoubles() {
+        consecutiveDoubles = 0;
+        lastRollWasDoubles = false;
     }
 
     public Player getCurrentPlayer() { return players[currentPlayerIndex]; }

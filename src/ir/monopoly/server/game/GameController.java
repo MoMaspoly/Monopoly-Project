@@ -30,8 +30,69 @@ public class GameController {
             switch (command.toUpperCase()) {
                 case "ROLL":
                     if (player.getStatus() == PlayerStatus.BANKRUPT) return "ERROR: You are bankrupt.";
-                    if (player.getStatus() == PlayerStatus.IN_JAIL) return "ERROR: You are in jail.";
+                    if (player.getStatus() == PlayerStatus.IN_JAIL) return "ERROR: You are in jail. Use JAIL_TRY, JAIL_PAY or JAIL_CARD.";
                     return handleRoll(player);
+
+                case "JAIL_TRY":
+                    if (player.getStatus() != PlayerStatus.IN_JAIL) return "ERROR: You are not in jail.";
+
+                    Dice jailDice = new Dice();
+                    int[] jRoll = jailDice.roll();
+                    int jDie1 = jRoll[0];
+                    int jDie2 = jRoll[1];
+                    int jSum = jailDice.getSum();
+
+                    gameState.addEvent(player.getName() + " tries to escape jail: rolled " + jDie1 + " + " + jDie2);
+
+                    if (jailDice.isDoubles()) {
+                        player.releaseFromJail();
+                        gameState.addEvent(player.getName() + " rolled doubles and escaped from jail!");
+
+                        Tile dest = MoveService.movePlayer(player, gameState.getBoard(), jSum);
+                        TileResolver.resolveTile(dest, gameState);
+
+                        gameState.getTurnManager().registerDoubles();
+
+                        return "JAIL_ESCAPE_DOUBLES:" + jSum;
+                    } else {
+                        player.incrementJailTurns();
+                        gameState.addEvent(player.getName() + " failed to roll doubles. Jail turn: " + player.getJailTurns() + "/3");
+
+                        if (player.getJailTurns() >= 3) {
+
+                            if (player.getBalance() < 50) {
+                                BankruptcyManager.processBankruptcy(player, null, gameState);
+                                return "BANKRUPT_JAIL";
+                            }
+                            player.changeBalance(-50);
+                            player.releaseFromJail();
+                            gameState.addEvent(player.getName() + " paid $50 after 3 failed attempts and got out.");
+
+                            Tile forcedDest = MoveService.movePlayer(player, gameState.getBoard(), jSum);
+                            TileResolver.resolveTile(forcedDest, gameState);
+                        }
+
+                        gameState.getTurnManager().passTurn();
+                        return "JAIL_FAILED:" + player.getJailTurns();
+                    }
+
+                case "JAIL_PAY":
+                    if (player.getStatus() != PlayerStatus.IN_JAIL) return "ERROR: You are not in jail.";
+                    if (player.getBalance() < 50) return "ERROR: Not enough money to pay $50.";
+
+                    player.changeBalance(-50);
+                    player.releaseFromJail();
+                    gameState.addEvent(player.getName() + " paid $50 and got out of jail.");
+                    return "JAIL_PAID";
+
+                case "JAIL_CARD":
+                    if (player.getStatus() != PlayerStatus.IN_JAIL) return "ERROR: You are not in jail.";
+                    if (!player.hasGetOutOfJailFreeCard()) return "ERROR: No Get Out of Jail Free card.";
+
+                    player.useGetOutOfJailFreeCard(true);
+                    player.releaseFromJail();
+                    gameState.addEvent(player.getName() + " used a Get Out of Jail Free card.");
+                    return "JAIL_CARD_USED";
 
                 case "BUY":
                     return handleBuy(player);
@@ -40,6 +101,7 @@ public class GameController {
                     return startAuctionForCurrentTile();
 
                 case "BID":
+                    if (extraData.isEmpty()) return "ERROR: Bid amount required.";
                     int bidAmount = Integer.parseInt(extraData);
                     return handleBid(player, bidAmount);
 
@@ -98,51 +160,50 @@ public class GameController {
 
                 case "LEADERBOARD":
                     LeaderboardManager.printTopPlayers(gameState);
-                    System.out.println("Top Interaction: " + gameState.getTransactionGraph().getTopInteraction(getPlayerNames()));
-                    return "SUCCESS: Leaderboard and graph analysis printed.";
+                    System.out.println(gameState.getTransactionGraph().getTopInteraction(getPlayerNames()));
+                    return "SUCCESS: Leaderboard and top financial interaction printed.";
 
                 case "END_TURN":
                     gameState.getTurnManager().passTurn();
                     gameState.checkGameOver();
                     return "SUCCESS: Turn changed.";
 
-                case "JAIL_PAY":
-                    if (player.getBalance() < 50) return "ERROR: You don't have enough money to pay the fine.";
-                    player.changeBalance(-50);
-                    player.releaseFromJail();
-                    gameState.addEvent(player.getName() + " paid the jail fine and was released.");
-                    return "SUCCESS: You were released from jail.";
-
-                case "JAIL_TRY":
-                    Dice dice = new Dice();
-                    int die1 = dice.roll();
-                    int die2 = dice.roll();
-                    int total = die1 + die2;
-                    if (die1 == die2) {
-                        player.releaseFromJail();
-                        MoveService.movePlayer(player, gameState.getBoard(), total);
-                        gameState.addEvent(player.getName() + " was released from jail with a double.");
-                    } else {
-                        player.incrementJailTurns();
-                        gameState.addEvent(player.getName() + " didn't roll a double. Turn " + player.getJailTurns() + " in jail.");
-                        if (player.getJailTurns() >= 3) {
-                            return handleCommand("JAIL_PAY", playerId, "");
-                        }
-                    }
-                    return "SUCCESS: Attempt to exit jail performed.";
-
                 default:
-                    return "ERROR: Unknown command.";
+                    return "ERROR: Unknown command: " + command;
             }
         } catch (Exception e) {
+            e.printStackTrace();
             return "ERROR: " + e.getMessage();
         }
     }
 
     private String handleRoll(Player player) {
         Dice dice = new Dice();
-        int total = dice.roll();
+        int[] roll = dice.roll();
+        int die1 = roll[0];
+        int die2 = roll[1];
+        int total = dice.getSum();
+        boolean isDoubles = dice.isDoubles();
+
         int oldPos = player.getCurrentPosition();
+
+        gameState.addEvent(player.getName() + " rolled " + die1 + " + " + die2 + " = " + total);
+
+        if (isDoubles) {
+            gameState.getTurnManager().registerDoubles();
+            gameState.addEvent("Doubles! " + player.getName() + " gets another turn.");
+
+            if (gameState.getTurnManager().hasThreeConsecutiveDoubles()) {
+                gameState.addEvent(player.getName() + " rolled doubles three times in a row → Sent to jail!");
+                player.setStatus(PlayerStatus.IN_JAIL);
+                player.setCurrentPosition(10);
+                gameState.getTurnManager().resetDoubles();
+                gameState.getTurnManager().passTurn();
+                return "DOUBLES_JAIL:" + total;
+            }
+        } else {
+            gameState.getTurnManager().resetDoubles();
+        }
 
         Tile destination = MoveService.movePlayer(player, gameState.getBoard(), total);
 
@@ -156,7 +217,11 @@ public class GameController {
 
         TileResolver.resolveTile(destination, gameState);
 
-        return "SUCCESS: Dice rolled " + total + ". New position: " + destination.getTileId();
+        if (!isDoubles) {
+            gameState.getTurnManager().passTurn();
+        }
+
+        return "SUCCESS: Dice rolled " + total + " (" + die1 + "+" + die2 + "). New position: " + destination.getTileId() + (isDoubles ? " | DOUBLES - Another turn!" : "");
     }
 
     private String handleBuy(Player player) {
@@ -194,7 +259,7 @@ public class GameController {
     private String handleBid(Player player, int amount) {
         if (currentAuction == null) return "ERROR: No auction in progress.";
         if (currentAuction.placeBid(player, amount)) {
-            gameState.addEvent(player.getName() + " bid " + amount + ".");
+            gameState.addEvent(player.getName() + " bid $" + amount);
             return "SUCCESS: Bid registered.";
         }
         return "ERROR: Invalid bid.";

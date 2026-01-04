@@ -139,6 +139,56 @@ public class UndoManager {
 
         GameAction action = redoStack.pop();
         undoStack.push(action);
-        gameState.addEvent("REDO performed: " + action.getType() + " (partial implementation - you can implement similar to undo in reverse)");
+
+        switch (action.getType()) {
+            case MONEY_CHANGE:
+                int diff = (Integer) action.getNewValue() - (Integer) action.getOldValue();
+                Player playerMoney = gameState.getPlayerById(action.getPlayerId());
+                if (playerMoney != null) {
+                    playerMoney.changeBalance(diff);
+                    gameState.updatePlayerRankings(playerMoney);
+                }
+                gameState.addEvent("REDO: Money change re-applied: $" + diff);
+                break;
+
+            case MOVEMENT:
+                Player playerMove = gameState.getPlayerById(action.getPlayerId());
+                if (playerMove != null) {
+                    playerMove.setCurrentPosition((Integer) action.getNewValue());
+                    gameState.addEvent("REDO: Movement re-applied to position " + action.getNewValue());
+                }
+                break;
+
+            case PROPERTY_PURCHASE:
+                // خرید مجدد ملک
+                Player playerPurchase = gameState.getPlayerById(action.getPlayerId());
+                Property purchasedProp = gameState.getPropertyById(action.getTargetId());
+                if (playerPurchase != null && purchasedProp != null) {
+                    playerPurchase.changeBalance(-purchasedProp.getPurchasePrice());
+                    playerPurchase.addProperty(purchasedProp);
+                    purchasedProp.setOwner(playerPurchase.getPlayerId());
+                    gameState.updatePlayerRankings(playerPurchase);
+                    gameState.addEvent("REDO: Property purchase re-applied for " + purchasedProp.getName());
+                }
+                break;
+
+            case CONSTRUCTION:
+                Player playerBuild = gameState.getPlayerById(action.getPlayerId());
+                Property builtProp = gameState.getPropertyById(action.getTargetId());
+                if (playerBuild != null && builtProp != null) {
+                    playerBuild.changeBalance(-(Integer) action.getOldValue()); // کسر هزینه خانه
+                    if (action.getNewValue().equals(5)) { // اگر به هتل رسیده بود
+                        builtProp.addHotel();
+                    } else {
+                        builtProp.addHouse();
+                    }
+                    gameState.updatePlayerRankings(playerBuild);
+                    gameState.addEvent("REDO: Construction re-applied on " + builtProp.getName());
+                }
+                break;
+
+            default:
+                gameState.addEvent("REDO: Action " + action.getType() + " re-applied.");
+        }
     }
 }

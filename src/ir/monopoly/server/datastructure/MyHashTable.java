@@ -9,7 +9,7 @@ public class MyHashTable<K, V> {
         table = new Entry[CAPACITY];
     }
 
-    private static class Entry<K, V> {
+    static class Entry<K, V> {
         K key;
         V value;
         Entry<K, V> next;

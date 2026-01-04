@@ -46,7 +46,6 @@ public class Player implements Comparable<Player> {
         return hasChanceJailCard || hasCommunityJailCard;
     }
 
-
     public void releaseFromJail() {
         this.status = PlayerStatus.ACTIVE;
         this.jailTurns = 0;
@@ -55,6 +54,7 @@ public class Player implements Comparable<Player> {
     public int getJailTurns() { return jailTurns; }
     public void incrementJailTurns() { this.jailTurns++; }
     public void resetJailTurns() { this.jailTurns = 0; }
+
     public int getPlayerId() { return playerId; }
     public String getName() { return name; }
     public int getBalance() { return balance; }
@@ -64,11 +64,15 @@ public class Player implements Comparable<Player> {
     public PlayerStatus getStatus() { return status; }
     public void setStatus(PlayerStatus status) { this.status = status; }
     public PropertyTree getOwnedProperties() { return ownedProperties; }
+
     public void addProperty(Property property) {
         ownedProperties.insert(property);
         property.setOwner(playerId);
     }
-    public void removeProperty(int propertyId) { ownedProperties.remove(propertyId); }
+
+    public void removeProperty(int propertyId) {
+        ownedProperties.remove(propertyId);
+    }
 
     @Override
     public int compareTo(Player other) {
@@ -81,7 +85,6 @@ public class Player implements Comparable<Player> {
     }
 
     public int getTotalWealth() {
-        int propertyValue = 0;
         final int[] sum = {0};
         ownedProperties.forEach(p -> {
             sum[0] += p.getPurchasePrice() + (p.getHouseCount() * p.getHouseCost());
