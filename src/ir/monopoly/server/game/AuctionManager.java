@@ -55,6 +55,14 @@ public class AuctionManager {
         if (currentBidderIndex == 0) roundFinished = true;
     }
 
+    public boolean isFinished() {
+        return activeBidders.size() <= 1 || (roundFinished && activeBidders.size() == 1);
+    }
+
+    public Property getProperty() {
+        return this.property;
+    }
+
     private void finalizeAuction() {
         if (currentWinner != null) {
             currentWinner.changeBalance(-currentHighestBid);

@@ -26,6 +26,10 @@ public class GameController {
             return "ERROR: Game is over.";
         }
 
+        if (currentAuction != null && !command.equalsIgnoreCase("BID") && !command.equalsIgnoreCase("PASS")) {
+            return "ERROR: Auction in progress. You must BID or PASS.";
+        }
+
         try {
             switch (command.toUpperCase()) {
                 case "ROLL":
@@ -75,7 +79,26 @@ public class GameController {
                         gameState.getTurnManager().passTurn();
                         return "JAIL_FAILED:" + player.getJailTurns();
                     }
+                case "PASS":
+                    if (currentAuction == null) return "ERROR: No auction in progress.";
+                    currentAuction.passBid(player);
+                    gameState.addEvent(player.getName() + " passed in auction.");
 
+                    if (currentAuction.isFinished()) {
+                        Player winner = currentAuction.getCurrentWinner();
+                        Property p = currentAuction.getProperty();
+
+                        if (winner != null) {
+                            gameState.getUndoManager().recordAction(new GameAction(
+                                    GameAction.ActionType.PROPERTY_PURCHASE,
+                                    winner.getPlayerId(),
+                                    null, null, p.getPropertyId()
+                            ));
+                        }
+                        currentAuction = null;
+                        return "SUCCESS: Auction finished.";
+                    }
+                    return "SUCCESS: Pass registered.";
                 case "JAIL_PAY":
                     if (player.getStatus() != PlayerStatus.IN_JAIL) return "ERROR: You are not in jail.";
                     if (player.getBalance() < 50) return "ERROR: Not enough money to pay $50.";
