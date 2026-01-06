@@ -1,8 +1,7 @@
 package ir.monopoly.server.network;
 
 import ir.monopoly.server.game.GameState;
-import ir.monopoly.server.player.Player;
-import ir.monopoly.server.player.PlayerStatus;
+import ir.monopoly.server.player.PlayerStatus; // اگر خطا داد، یعنی فایل Mahna نیست
 import java.io.*;
 import java.net.Socket;
 
@@ -25,24 +24,27 @@ public class ClientHandler extends Thread {
             out = new PrintWriter(socket.getOutputStream(), true);
             in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
 
-            // پیام خوش‌آمدگویی
-            sendMessage("{\"type\":\"CONNECTED\",\"playerId\":" + playerId + ",\"message\":\"Welcome Player " + playerId + "\"}");
+            String welcome = "{\"type\":\"CONNECTED\",\"playerId\":" + playerId + ",\"message\":\"Welcome to Monopoly!\"}";
+            sendMessage(welcome);
 
             String line;
             while ((line = in.readLine()) != null) {
                 System.out.println("Command from Player " + playerId + ": " + line);
 
-                // 1. اجرای دستور در منطق بازی (کد مهنا)
-                String response = server.getGameController().handleCommand(line.toUpperCase(), playerId, "");
+                try {
+                    String[] parts = line.trim().split("\\s+", 2);
+                    String commandType = parts[0].toUpperCase();
+                    String extra = parts.length > 1 ? parts[1] : "";
 
-                // 2. ساخت پاسخ جیسون با داده‌های واقعی
-                String jsonResponse = formatToJson(response, line.toUpperCase());
+                    String response = server.getGameController().handleCommand(commandType, playerId, extra);
 
-                // 3. ارسال پاسخ به خود بازیکن
-                sendMessage(jsonResponse);
+                    if (response != null && !response.isEmpty()) {
+                        sendMessage(response);
+                    }
 
-                // 4. خبر دادن به بقیه (مثلاً فلانی حرکت کرد)
-                server.broadcast(formatTurnUpdate());
+                } catch (Exception e) {
+                    sendMessage("{\"type\":\"ERROR\",\"message\":\"Invalid command format\"}");
+                }
             }
         } catch (IOException e) {
             handleDisconnect();
@@ -55,72 +57,31 @@ public class ClientHandler extends Thread {
 
     private void handleDisconnect() {
         System.out.println("Player " + playerId + " disconnected.");
-        GameState gs = server.getGameState();
-        // چک می‌کنیم بازی نول نباشد
-        if (gs != null) {
-            Player p = gs.getPlayerById(playerId);
-            if (p != null) p.setStatus(PlayerStatus.BANKRUPT);
+        server.removeClient(this);
 
-            // خبر به بقیه
-            server.broadcast("{\"type\":\"PLAYER_DISCONNECTED\",\"playerId\":" + playerId + ",\"message\":\"Player disconnected.\"}");
+        // مدیریت قطع اتصال با استفاده از لاجیک مهنا
+        try {
+            GameState gs = server.getGameState();
+            if (gs != null && gs.getPlayerById(playerId) != null) {
+                gs.getPlayerById(playerId).setStatus(PlayerStatus.BANKRUPT);
 
-            // اگر نوبت او بود، نوبت رد شود
-            if (gs.getTurnManager().getCurrentPlayer().getPlayerId() == playerId) {
-                gs.getTurnManager().passTurn();
-                server.broadcast(formatTurnUpdate());
+                String name = gs.getPlayerById(playerId).getName();
+                String msg = "{\"type\":\"PLAYER_LEFT\",\"playerId\":" + playerId +
+                        ",\"playerName\":\"" + name + "\",\"message\":\"Player disconnected.\"}";
+                server.broadcast(msg);
             }
+        } catch (Exception e) {
+            System.out.println("Error handling disconnect: " + e.getMessage());
         }
     }
 
     public void sendMessage(String message) {
-        if (out != null) {
+        if (out != null && !socket.isClosed()) {
             out.println(message);
         }
     }
 
-    // --- بخش اصلاح شده (FIXED) ---
-    private String formatToJson(String response, String command) {
-        // دسترسی به وضعیت واقعی بازیکن از طریق سرور -> گیم‌استیت
-        Player player = server.getGameState().getPlayerById(playerId);
-
-        // فرار از کاراکترهای خاص برای جلوگیری از خرابی JSON
-        String safeResponse = response.replace("\"", "'");
-
-        if (command.startsWith("ROLL")) {
-            // خواندن موقعیت و پول واقعی از بازیکن
-            int realPosition = player.getCurrentPosition();
-            int realBalance = player.getBalance();
-
-            return "{" +
-                    "\"type\":\"ROLL_UPDATE\"," +
-                    "\"playerId\":" + playerId + "," +
-                    "\"currentPosition\":" + realPosition + "," +
-                    "\"balance\":" + realBalance + "," +
-                    "\"message\":\"" + safeResponse + "\"" +
-                    "}";
-        }
-
-        if (command.startsWith("BUY")) {
-            int realBalance = player.getBalance();
-            // اینجا لیست دارایی‌ها را هم می‌توان فرستاد اما فعلاً بالانس کافی است
-            return "{" +
-                    "\"type\":\"BUY_UPDATE\"," +
-                    "\"playerId\":" + playerId + "," +
-                    "\"balance\":" + realBalance + "," +
-                    "\"message\":\"" + safeResponse + "\"" +
-                    "}";
-        }
-
-        if (command.equals("END_TURN")) {
-            return "{\"type\":\"TURN_END\",\"playerId\":" + playerId + ",\"message\":\"Turn ended.\"}";
-        }
-
-        // پیام پیش‌فرض
-        return "{\"type\":\"GENERAL\",\"playerId\":" + playerId + ",\"message\":\"" + safeResponse + "\"}";
-    }
-
-    private String formatTurnUpdate() {
-        int currentPlayerId = server.getGameState().getTurnManager().getCurrentPlayer().getPlayerId();
-        return "{\"type\":\"TURN_UPDATE\",\"currentPlayer\":" + currentPlayerId + "}";
+    public int getPlayerId() {
+        return playerId;
     }
 }

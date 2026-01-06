@@ -2,311 +2,262 @@ package ir.monopoly.server.game;
 
 import ir.monopoly.server.board.Tile;
 import ir.monopoly.server.board.TileType;
+import ir.monopoly.server.network.GameServer;
 import ir.monopoly.server.player.Player;
 import ir.monopoly.server.player.PlayerStatus;
 import ir.monopoly.server.property.Property;
 
-public class GameController {
-    private final GameState gameState;
-    private AuctionManager currentAuction = null;
+import java.util.Random;
 
-    public GameController(GameState gameState) {
+public class GameController {
+
+    private final GameState gameState;
+    private final GameServer server;
+    private final Random random = new Random();
+
+    public GameController(GameState gameState, GameServer server) {
         this.gameState = gameState;
+        this.server = server;
     }
 
-    public String handleCommand(String command, int playerId, String extraData) {
-        Player player = gameState.getPlayerById(playerId);
-        if (player == null) return "ERROR: Player not found.";
+    public synchronized String handleCommand(String commandType, int requestPlayerId, String extra) {
+        if (gameState == null) return "{\"type\":\"ERROR\",\"message\":\"Waiting for players...\"}";
 
-        if (gameState.getTurnManager().getCurrentPlayer().getPlayerId() != playerId) {
-            return "ERROR: It is not your turn.";
+        Player currentPlayer = gameState.getTurnManager().getCurrentPlayer();
+
+        // اگر بازیکن ورشکسته است، نباید کاری کند
+        if (currentPlayer.getStatus() == PlayerStatus.BANKRUPT && !commandType.equals("GET_STATS")) {
+            return "{\"type\":\"ERROR\",\"message\":\"You are bankrupt!\"}";
         }
 
-        if (gameState.isGameOver()) {
-            return "ERROR: Game is over.";
-        }
-
-        if (currentAuction != null && !command.equalsIgnoreCase("BID") && !command.equalsIgnoreCase("PASS")) {
-            return "ERROR: Auction in progress. You must BID or PASS.";
+        // چک نوبت (به جز درخواست آمار)
+        if (currentPlayer.getPlayerId() != requestPlayerId && !commandType.equals("GET_STATS")) {
+            return "{\"type\":\"ERROR\",\"message\":\"It is NOT your turn!\"}";
         }
 
         try {
-            switch (command.toUpperCase()) {
+            switch (commandType) {
                 case "ROLL":
-                    if (player.getStatus() == PlayerStatus.BANKRUPT) return "ERROR: You are bankrupt.";
-                    if (player.getStatus() == PlayerStatus.IN_JAIL) return "ERROR: You are in jail. Use JAIL_TRY, JAIL_PAY or JAIL_CARD.";
-                    return handleRoll(player);
-
-                case "JAIL_TRY":
-                    if (player.getStatus() != PlayerStatus.IN_JAIL) return "ERROR: You are not in jail.";
-
-                    Dice jailDice = new Dice();
-                    int[] jRoll = jailDice.roll();
-                    int jDie1 = jRoll[0];
-                    int jDie2 = jRoll[1];
-                    int jSum = jailDice.getSum();
-
-                    gameState.addEvent(player.getName() + " tries to escape jail: rolled " + jDie1 + " + " + jDie2);
-
-                    if (jailDice.isDoubles()) {
-                        player.releaseFromJail();
-                        gameState.addEvent(player.getName() + " rolled doubles and escaped from jail!");
-
-                        Tile dest = MoveService.movePlayer(player, gameState.getBoard(), jSum);
-                        TileResolver.resolveTile(dest, gameState);
-
-                        gameState.getTurnManager().registerDoubles();
-
-                        return "JAIL_ESCAPE_DOUBLES:" + jSum;
-                    } else {
-                        player.incrementJailTurns();
-                        gameState.addEvent(player.getName() + " failed to roll doubles. Jail turn: " + player.getJailTurns() + "/3");
-
-                        if (player.getJailTurns() >= 3) {
-
-                            if (player.getBalance() < 50) {
-                                BankruptcyManager.processBankruptcy(player, null, gameState);
-                                return "BANKRUPT_JAIL";
-                            }
-                            player.changeBalance(-50);
-                            player.releaseFromJail();
-                            gameState.addEvent(player.getName() + " paid $50 after 3 failed attempts and got out.");
-
-                            Tile forcedDest = MoveService.movePlayer(player, gameState.getBoard(), jSum);
-                            TileResolver.resolveTile(forcedDest, gameState);
-                        }
-
-                        gameState.getTurnManager().passTurn();
-                        return "JAIL_FAILED:" + player.getJailTurns();
-                    }
-                case "PASS":
-                    if (currentAuction == null) return "ERROR: No auction in progress.";
-                    currentAuction.passBid(player);
-                    gameState.addEvent(player.getName() + " passed in auction.");
-
-                    if (currentAuction.isFinished()) {
-                        Player winner = currentAuction.getCurrentWinner();
-                        Property p = currentAuction.getProperty();
-
-                        if (winner != null) {
-                            gameState.getUndoManager().recordAction(new GameAction(
-                                    GameAction.ActionType.PROPERTY_PURCHASE,
-                                    winner.getPlayerId(),
-                                    null, null, p.getPropertyId()
-                            ));
-                        }
-                        currentAuction = null;
-                        return "SUCCESS: Auction finished.";
-                    }
-                    return "SUCCESS: Pass registered.";
-                case "JAIL_PAY":
-                    if (player.getStatus() != PlayerStatus.IN_JAIL) return "ERROR: You are not in jail.";
-                    if (player.getBalance() < 50) return "ERROR: Not enough money to pay $50.";
-
-                    player.changeBalance(-50);
-                    player.releaseFromJail();
-                    gameState.addEvent(player.getName() + " paid $50 and got out of jail.");
-                    return "JAIL_PAID";
-
-                case "JAIL_CARD":
-                    if (player.getStatus() != PlayerStatus.IN_JAIL) return "ERROR: You are not in jail.";
-                    if (!player.hasGetOutOfJailFreeCard()) return "ERROR: No Get Out of Jail Free card.";
-
-                    player.useGetOutOfJailFreeCard(true);
-                    player.releaseFromJail();
-                    gameState.addEvent(player.getName() + " used a Get Out of Jail Free card.");
-                    return "JAIL_CARD_USED";
-
+                    return handleRoll(currentPlayer);
                 case "BUY":
-                    return handleBuy(player);
-
-                case "NO_BUY":
-                    return startAuctionForCurrentTile();
-
-                case "BID":
-                    if (extraData.isEmpty()) return "ERROR: Bid amount required.";
-                    int bidAmount = Integer.parseInt(extraData);
-                    return handleBid(player, bidAmount);
-
-                case "PROPOSE_TRADE":
-                    return handleProposeTrade(player, extraData);
-
-                case "ACCEPT_TRADE":
-                    return handleAcceptTrade(player);
-
-                case "REJECT_TRADE":
-                    return handleRejectTrade(player);
-
-                case "BUILD":
-                    int propId = Integer.parseInt(extraData);
-                    Property p = gameState.getPropertyById(propId);
-                    if (p == null) return "ERROR: Property not found.";
-                    String buildResult = ConstructionManager.buildHouse(player, p, gameState);
-                    if (buildResult.equals("SUCCESS")) {
-                        gameState.updatePlayerRankings(player);
-                    }
-                    return buildResult;
-
-                case "MORTGAGE":
-                    int mPropId = Integer.parseInt(extraData);
-                    Property mp = gameState.getPropertyById(mPropId);
-                    if (mp == null) return "ERROR: Property not found.";
-                    MortgageManager.mortgageProperty(player, mp, gameState);
-                    gameState.updatePlayerRankings(player);
-                    return "SUCCESS: Property mortgaged.";
-
-                case "UNMORTGAGE":
-                    int umPropId = Integer.parseInt(extraData);
-                    Property ump = gameState.getPropertyById(umPropId);
-                    if (ump == null) return "ERROR: Property not found.";
-                    MortgageManager.unmortgageProperty(player, ump, gameState);
-                    gameState.updatePlayerRankings(player);
-                    return "SUCCESS: Mortgage lifted.";
-
-                case "UNDO":
-                    gameState.getUndoManager().undo();
-                    gameState.updatePlayerRankings(player);
-                    return "SUCCESS: Undo performed.";
-
-                case "REDO":
-                    gameState.getUndoManager().redo();
-                    gameState.updatePlayerRankings(player);
-                    return "SUCCESS: Redo performed.";
-
-                case "REPORT_FINANCIAL":
-                    gameState.getTransactionGraph().printFinancialSummary(getPlayerNames());
-                    return "SUCCESS: Financial report printed.";
-
-                case "REPORT_WEALTH":
-                    System.out.println(gameState.getWealthReport());
-                    return "SUCCESS: Wealth list printed.";
-
-                case "LEADERBOARD":
-                    LeaderboardManager.printTopPlayers(gameState);
-                    System.out.println(gameState.getTransactionGraph().getTopInteraction(getPlayerNames()));
-                    return "SUCCESS: Leaderboard and top financial interaction printed.";
-
+                    return handleBuy(currentPlayer);
+                case "BUILD_REQUEST":
+                    return handleBuild(currentPlayer);
                 case "END_TURN":
-                    gameState.getTurnManager().passTurn();
-                    gameState.checkGameOver();
-                    return "SUCCESS: Turn changed.";
-
+                    return handleEndTurn();
+                case "BID":
+                    // اتصال به AuctionManager (ساده)
+                    int bidAmount = Integer.parseInt(extra.trim());
+                    server.broadcast("{\"type\":\"INFO\",\"message\":\"Player " + requestPlayerId + " bid $" + bidAmount + "\"}");
+                    return null;
+                case "TRADE":
+                    return handleTrade(currentPlayer, extra);
+                case "GET_STATS":
+                    return "{\"type\":\"INFO\",\"message\":\"Stats requested\"}";
                 default:
-                    return "ERROR: Unknown command: " + command;
+                    return "{\"type\":\"ERROR\",\"message\":\"Unknown command\"}";
             }
         } catch (Exception e) {
             e.printStackTrace();
-            return "ERROR: " + e.getMessage();
+            return "{\"type\":\"ERROR\",\"message\":\"Server Error: " + e.getMessage() + "\"}";
         }
     }
 
+    // --- ۱. منطق تاس و حرکت ---
     private String handleRoll(Player player) {
+        // استفاده از کلاس Dice که فرستادی
         Dice dice = new Dice();
-        int[] roll = dice.roll();
-        int die1 = roll[0];
-        int die2 = roll[1];
-        int total = dice.getSum();
-        boolean isDoubles = dice.isDoubles();
+        int[] result = dice.roll();
+        int dice1 = result[0];
+        int dice2 = result[1];
+        int total = dice1 + dice2;
 
-        int oldPos = player.getCurrentPosition();
-
-        gameState.addEvent(player.getName() + " rolled " + die1 + " + " + die2 + " = " + total);
-
-        if (isDoubles) {
+        if (dice.isDoubles()) {
             gameState.getTurnManager().registerDoubles();
-            gameState.addEvent("Doubles! " + player.getName() + " gets another turn.");
-
             if (gameState.getTurnManager().hasThreeConsecutiveDoubles()) {
-                gameState.addEvent(player.getName() + " rolled doubles three times in a row → Sent to jail!");
-                player.setStatus(PlayerStatus.IN_JAIL);
-                player.setCurrentPosition(10);
-                gameState.getTurnManager().resetDoubles();
-                gameState.getTurnManager().passTurn();
-                return "DOUBLES_JAIL:" + total;
+                sendToJail(player);
+                return null;
             }
+        }
+
+        int currentPos = player.getCurrentPosition();
+        int newPos = (currentPos + total) % 40;
+
+        // عبور از GO (توسط MoveService یا دستی)
+        if (newPos < currentPos) {
+            GoHandler.handlePassingGo(player);
+            server.broadcast("{\"type\":\"INFO\",\"message\":\"Player " + player.getName() + " passed GO and collected $200!\"}");
+        }
+
+        player.setCurrentPosition(newPos);
+
+        // ارسال آپدیت حرکت به کلاینت
+        String moveMsg = "{\"type\":\"ROLL_UPDATE\",\"playerId\":" + player.getPlayerId() +
+                ",\"dice1\":" + dice1 + ",\"dice2\":" + dice2 +
+                ",\"currentPosition\":" + newPos +
+                ",\"message\":\"rolled " + total + "\"}";
+        server.broadcast(moveMsg);
+
+        // بررسی خانه مقصد (اتصال به TileResolver)
+        handleTileEffect(player, newPos);
+
+        // ارسال آپدیت پول (چون ممکن است در حرکت پول گرفته باشد)
+        sendStatsUpdate(player);
+
+        return null;
+    }
+
+    // --- ۲. بررسی اثر خانه (اتصال به Logic) ---
+    private void handleTileEffect(Player player, int pos) {
+        if (gameState.getBoard() == null) return;
+        Tile tile = gameState.getBoard().getTileAt(pos);
+        if (tile == null) return;
+
+        // الف) اگر کارت است: باید دستی هندل کنیم تا متن کارت را به کلاینت بفرستیم
+        if (tile.getTileType() == TileType.CARD) {
+            handleCardTile(player, tile);
+        }
+        // ب) اگر ملک است و صاحب ندارد: پیشنهاد خرید
+        else if (tile.getTileType() == TileType.PROPERTY) {
+            Property prop = (Property) tile.getTileData();
+            if (prop.getOwnerId() == null) {
+                server.sendToPlayer(player.getPlayerId(),
+                        "{\"type\":\"INFO\",\"message\":\"For Sale: " + prop.getName() + " ($" + prop.getPurchasePrice() + ")\"}");
+            } else {
+                // اگر صاحب دارد، TileResolver اجاره را حساب می‌کند
+                TileResolver.resolveTile(tile, gameState);
+                sendStatsUpdate(player); // آپدیت پول پس از پرداخت اجاره
+            }
+        }
+        // ج) بقیه موارد (مالیات، زندان و...) را TileResolver انجام دهد
+        else {
+            TileResolver.resolveTile(tile, gameState);
+            sendStatsUpdate(player);
+        }
+    }
+
+    // --- مدیریت اختصاصی کارت‌ها (برای ارسال متن به UI) ---
+    private void handleCardTile(Player player, Tile tile) {
+        Card card;
+        // تشخیص نوع کارت از روی مکان
+        int pos = player.getCurrentPosition();
+        if (pos == 7 || pos == 22 || pos == 36) {
+            card = gameState.getCardDeck().drawChance();
         } else {
-            gameState.getTurnManager().resetDoubles();
+            card = gameState.getCardDeck().drawCommunityChest();
         }
 
-        Tile destination = MoveService.movePlayer(player, gameState.getBoard(), total);
+        if (card != null) {
+            // ۱. نمایش پاپ‌آپ در کلاینت
+            server.broadcast("{\"type\":\"SHOW_CARD\",\"text\":\"" + card.getDescription() + "\",\"playerId\":" + player.getPlayerId() + "}");
 
-        gameState.getUndoManager().recordAction(new GameAction(
-                GameAction.ActionType.MOVEMENT,
-                player.getPlayerId(),
-                oldPos,
-                destination.getTileId(),
-                0
-        ));
+            // ۲. اجرای منطق کارت (جابجایی یا پول)
+            card.execute(player, gameState);
 
-        TileResolver.resolveTile(destination, gameState);
+            // ۳. آپدیت وضعیت (چون کارت ممکن است مهره را جابجا کرده باشد یا پول داده باشد)
+            sendStatsUpdate(player);
+            server.broadcast("{\"type\":\"ROLL_UPDATE\",\"playerId\":" + player.getPlayerId() +
+                    ",\"currentPosition\":" + player.getCurrentPosition() + "}");
 
-        if (!isDoubles) {
-            gameState.getTurnManager().passTurn();
+            // اگر کارت بازیکن را جابجا کرد، باید اثر خانه جدید هم چک شود (مثلا رفت روی مالیات)
+            if (player.getCurrentPosition() != pos) {
+                handleTileEffect(player, player.getCurrentPosition());
+            }
         }
-
-        return "SUCCESS: Dice rolled " + total + " (" + die1 + "+" + die2 + "). New position: " + destination.getTileId() + (isDoubles ? " | DOUBLES - Another turn!" : "");
     }
 
+    // --- ۳. خرید ملک (اتصال به PropertyService) ---
     private String handleBuy(Player player) {
-        Tile currentTile = gameState.getBoard().getTileAt(player.getCurrentPosition());
-        if (currentTile.getTileType() != TileType.PROPERTY) return "ERROR: This tile is not a property.";
+        int pos = player.getCurrentPosition();
+        if (gameState.getBoard() == null) return "{\"type\":\"ERROR\",\"message\":\"Board error\"}";
+        Tile tile = gameState.getBoard().getTileAt(pos);
 
-        Property prop = (Property) currentTile.getTileData();
-        if (prop.getOwnerId() != null) return "ERROR: This property has already been sold.";
+        if (tile != null && tile.getTileData() instanceof Property) {
+            Property prop = (Property) tile.getTileData();
 
-        if (PropertyService.buyProperty(player, prop, gameState)) {
-            gameState.getUndoManager().recordAction(new GameAction(
-                    GameAction.ActionType.PROPERTY_PURCHASE,
-                    player.getPlayerId(),
-                    null,
-                    null,
-                    prop.getPropertyId()
-            ));
-            gameState.updatePlayerRankings(player);
-            return "SUCCESS: Property purchased.";
+            // استفاده از سرویس خرید شما
+            boolean success = PropertyService.buyProperty(player, prop, gameState);
+
+            if (success) {
+                sendStatsUpdate(player); // آپدیت پول و لیست املاک در کلاینت
+                server.broadcast("{\"type\":\"BUY_UPDATE\",\"playerId\":" + player.getPlayerId() +
+                        ",\"success\":true,\"message\":\"Bought " + prop.getName() + "\"}");
+                return null;
+            } else {
+                return "{\"type\":\"ERROR\",\"message\":\"Cannot buy (Insufficient funds or owned)\"}";
+            }
         }
-        return "ERROR: Purchase unsuccessful.";
+        return "{\"type\":\"ERROR\",\"message\":\"Cannot buy here.\"}";
     }
 
-    private String startAuctionForCurrentTile() {
-        Player currentPlayer = gameState.getTurnManager().getCurrentPlayer();
-        Tile tile = gameState.getBoard().getTileAt(currentPlayer.getCurrentPosition());
-        if (tile.getTileType() != TileType.PROPERTY) return "ERROR: This tile cannot be auctioned.";
+    // --- ۴. ساخت و ساز (اتصال به ConstructionManager) ---
+    private String handleBuild(Player player) {
+        int pos = player.getCurrentPosition();
+        Tile tile = gameState.getBoard().getTileAt(pos);
 
-        Property prop = (Property) tile.getTileData();
-        currentAuction = new AuctionManager(prop, gameState.getPlayers());
-        gameState.addEvent("Auction for property " + prop.getName() + " started.");
-        return "AUCTION_STARTED";
-    }
+        if (tile != null && tile.getTileData() instanceof Property) {
+            Property prop = (Property) tile.getTileData();
 
-    private String handleBid(Player player, int amount) {
-        if (currentAuction == null) return "ERROR: No auction in progress.";
-        if (currentAuction.placeBid(player, amount)) {
-            gameState.addEvent(player.getName() + " bid $" + amount);
-            return "SUCCESS: Bid registered.";
+            // استفاده از سرویس ساخت و ساز شما
+            String result = ConstructionManager.buildHouse(player, prop, gameState);
+
+            if (result.equals("SUCCESS")) {
+                sendStatsUpdate(player);
+                int count = prop.hasHotel() ? 5 : prop.getHouseCount();
+                server.broadcast("{\"type\":\"HOUSE_BUILT\",\"tileId\":" + prop.getPropertyId() +
+                        ",\"count\":" + count +
+                        ",\"message\":\"Construction successful on " + prop.getName() + "\"}");
+                return null;
+            } else {
+                return "{\"type\":\"ERROR\",\"message\":\"" + result + "\"}";
+            }
         }
-        return "ERROR: Invalid bid.";
+        return "{\"type\":\"ERROR\",\"message\":\"Cannot build here.\"}";
     }
 
-    private String handleProposeTrade(Player player, String extraData) {
-        gameState.addEvent("Trade proposed.");
-        return "SUCCESS: Trade offer sent.";
+    // --- ۵. مدیریت ترید (اتصال به TradeManager) ---
+    private String handleTrade(Player player, String extra) {
+        // فرمت ساده ورودی از کلاینت: "TargetID Amount" (مثلا: 2 100)
+        try {
+            String[] parts = extra.split(" ");
+            int targetId = Integer.parseInt(parts[0]);
+            int amount = Integer.parseInt(parts[1]); // پولی که پیشنهاد میدهیم
+
+            // ساخت آبجکت ترید (فعلا بدون ملک، فقط پول)
+            TradeOffer offer = new TradeOffer(player.getPlayerId(), targetId, amount, 0, new Property[0], new Property[0]);
+
+            TradeManager.proposeTrade(offer, gameState);
+
+            server.sendToPlayer(targetId, "{\"type\":\"INFO\",\"message\":\"Trade Offer: Player " + player.getPlayerId() + " wants to give you $" + amount + "\"}");
+            return "{\"type\":\"INFO\",\"message\":\"Trade sent.\"}";
+
+        } catch (Exception e) {
+            return "{\"type\":\"ERROR\",\"message\":\"Invalid trade format. Use: ID Amount\"}";
+        }
     }
 
-    private String handleAcceptTrade(Player player) {
-        TradeManager.acceptTrade(gameState);
-        return "SUCCESS: Trade completed.";
+    // --- ۶. پایان نوبت ---
+    private String handleEndTurn() {
+        gameState.getTurnManager().passTurn();
+        Player nextPlayer = gameState.getTurnManager().getCurrentPlayer();
+        server.broadcast("{\"type\":\"TURN_UPDATE\",\"currentPlayer\":" + nextPlayer.getPlayerId() + "}");
+        return null;
     }
 
-    private String handleRejectTrade(Player player) {
-        TradeManager.rejectTrade(gameState);
-        return "SUCCESS: Trade rejected.";
+    // --- متدهای کمکی ---
+
+    private void sendToJail(Player player) {
+        player.setStatus(PlayerStatus.IN_JAIL);
+        player.setCurrentPosition(10);
+        player.resetJailTurns();
+        server.broadcast("{\"type\":\"ROLL_UPDATE\",\"playerId\":" + player.getPlayerId() +
+                ",\"currentPosition\":10,\"message\":\"GO TO JAIL!\"}");
     }
 
-    private String[] getPlayerNames() {
-        Player[] players = gameState.getPlayers();
-        String[] names = new String[players.length];
-        for (int i = 0; i < players.length; i++) names[i] = players[i].getName();
-        return names;
+    // این متد حیاتی است برای اینکه پول و املاک در کلاینت آپدیت شود
+    private void sendStatsUpdate(Player player) {
+        String msg = "{\"type\":\"PLAYER_STATS\",\"playerId\":" + player.getPlayerId() +
+                ",\"balance\":" + player.getBalance() + "}";
+        server.broadcast(msg);
     }
 }
