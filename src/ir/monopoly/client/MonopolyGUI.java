@@ -40,7 +40,6 @@ public class MonopolyGUI extends Application {
     private int jailTurns = 0;
     private int currentBidderId = -1;
 
-    // UI Components
     private Pane boardPane;
     private TextArea logArea;
     private Label balanceLabel, playerInfoLabel, statusLabel, auctionStatusLabel, jailStatusLabel;
@@ -67,11 +66,9 @@ public class MonopolyGUI extends Application {
 
         loadAssets();
 
-        // Root
         VBox root = new VBox();
         root.setSpacing(0);
 
-        // Background
         if (bgImage != null) {
             root.setBackground(new Background(new BackgroundImage(
                     bgImage,
@@ -82,7 +79,6 @@ public class MonopolyGUI extends Application {
             )));
         }
 
-        // Board
         boardPane = new Pane();
         boardPane.setPrefSize(BOARD_SIZE, BOARD_SIZE);
         boardPane.setMinSize(BOARD_SIZE, BOARD_SIZE);
@@ -103,15 +99,12 @@ public class MonopolyGUI extends Application {
         boardWrapper.setAlignment(Pos.CENTER);
         boardWrapper.setPadding(Insets.EMPTY);
 
-        // Right Panel
         VBox rightPanel = createRightPanel();
 
-        // Main Row
         HBox mainRow = new HBox();
         mainRow.setSpacing(0);
         mainRow.setAlignment(Pos.CENTER_LEFT);
 
-        // Spacer (برای پر کردن فضای خالی)
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
@@ -120,7 +113,6 @@ public class MonopolyGUI extends Application {
 
         mainRow.getChildren().addAll(boardWrapper, spacer, rightPanel);
 
-        // Bottom Controls
         HBox controls = createControlPanel();
 
         VBox.setVgrow(mainRow, Priority.ALWAYS);
@@ -175,7 +167,6 @@ public class MonopolyGUI extends Application {
         propertyList.setPrefHeight(120);
         propertyList.getItems().add("No properties owned");
 
-        // Jail Panel
         jailStatusLabel = new Label("You are FREE!");
         jailStatusLabel.setFont(Font.font("Arial", FontWeight.BOLD, 14));
         jailStatusLabel.setTextFill(Color.DARKRED);
@@ -183,7 +174,6 @@ public class MonopolyGUI extends Application {
         btnJailDouble = new Button("🎲 Try Double");
         btnJailDouble.setStyle("-fx-background-color: #f39c12; -fx-text-fill: white; -fx-font-weight: bold;");
         btnJailDouble.setOnAction(e -> {
-            // در زندان Roll = تلاش برای دوبل
             client.sendMessage("ROLL");
             hasRolledThisTurn = true;
             updateControlStates();
@@ -192,7 +182,6 @@ public class MonopolyGUI extends Application {
         btnJailPay = new Button("💰 Pay $50 Fine");
         btnJailPay.setStyle("-fx-background-color: #27ae60; -fx-text-fill: white; -fx-font-weight: bold;");
         btnJailPay.setOnAction(e -> {
-            // ارسال دستور پرداخت جریمه (در سرور با Roll مدیریت می‌شود)
             client.sendMessage("ROLL");
             hasRolledThisTurn = true;
             updateControlStates();
@@ -201,7 +190,6 @@ public class MonopolyGUI extends Application {
         btnJailCard = new Button("🃏 Use Jail Card");
         btnJailCard.setStyle("-fx-background-color: #8e44ad; -fx-text-fill: white; -fx-font-weight: bold;");
         btnJailCard.setOnAction(e -> {
-            // استفاده از کارت آزادی (نیاز به پیاده‌سازی در سرور دارد)
             showAlert("Jail Card", "Use jail card feature needs server implementation");
         });
 
@@ -213,7 +201,6 @@ public class MonopolyGUI extends Application {
         jailPanel.setStyle("-fx-background-color: rgba(255, 230, 230, 0.9); -fx-background-radius: 10; -fx-border-color: #c0392b; -fx-border-width: 2;");
         jailPanel.setVisible(false);
 
-        // Auction Panel
         auctionStatusLabel = new Label("No active auction");
         auctionStatusLabel.setFont(Font.font("Arial", FontWeight.BOLD, 14));
         auctionStatusLabel.setTextFill(Color.PURPLE);
@@ -255,7 +242,6 @@ public class MonopolyGUI extends Application {
         statusLabel = new Label("Waiting for players...");
         statusLabel.setTextFill(Color.FIREBRICK);
 
-        // Add Leaderboard button
         btnLeaderboard = new Button("🏆 LEADERBOARD");
         btnLeaderboard.setStyle("-fx-background-color: #9b59b6; -fx-text-fill: white; -fx-font-weight: bold; -fx-background-radius: 10;");
         btnLeaderboard.setMaxWidth(Double.MAX_VALUE);
@@ -307,7 +293,6 @@ public class MonopolyGUI extends Application {
         btnRedo.setOnAction(e -> client.sendMessage("REDO"));
         btnEndTurn.setOnAction(e -> client.sendMessage("END_TURN"));
 
-        // Initially disable buttons
         updateControlStates();
 
         box.getChildren().addAll(btnRoll, btnBuy, btnTrade, btnUndo, btnRedo, btnEndTurn);
@@ -343,7 +328,6 @@ public class MonopolyGUI extends Application {
                         moveToken(pId, pos);
                         logArea.appendText("➤ Player " + pId + " moved to position " + pos + "\n");
 
-                        // اگر به زندان رفت (خانه 10)
                         if (pId == myPlayerId && pos == 10 && inJail) {
                             jailStatusLabel.setText("🔒 IN JAIL (Position: " + pos + ")");
                         }
@@ -487,7 +471,6 @@ public class MonopolyGUI extends Application {
                             showLeaderboardDialog(text);
                         } else if (text.contains("AUCTION") || text.contains("JAIL") || text.contains("Doubles")) {
                             logArea.appendText("➤ " + text + "\n");
-                            // اگر پیام مربوط به زندان است
                             if (text.contains("IN_JAIL") || text.contains("Jail") || text.contains("Doubles")) {
                                 updateJailStatusFromMessage(text);
                             }
@@ -597,12 +580,10 @@ public class MonopolyGUI extends Application {
         btnBid.setDisable(!auctionActive);
         btnPass.setDisable(!auctionActive);
 
-        // Jail controls
         btnJailDouble.setDisable(!canRollInJail);
         btnJailPay.setDisable(!canRollInJail);
         btnJailCard.setDisable(!canRollInJail);
 
-        // Update button texts based on jail status
         if (inJail && isMyTurn) {
             btnRoll.setText("🎲 TRY DOUBLE");
             btnRoll.setStyle("-fx-background-color: #f39c12; -fx-text-fill: white; -fx-font-weight: bold; -fx-background-radius: 12;");

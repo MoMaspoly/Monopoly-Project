@@ -5,14 +5,9 @@ import ir.monopoly.server.player.Player;
 
 public class LeaderboardManager {
 
-    /**
-     * Uses a Max-Heap to extract the top players by total wealth.
-     * @return A formatted string for GUI display.
-     */
     public static String getTopKReport(GameState gameState) {
         StringBuilder sb = new StringBuilder();
 
-        // 1. Top 3 by Wealth
         sb.append("🏆 MONOPOLY LEADERBOARD 🏆\n");
         sb.append("══════════════════════════\n\n");
 
@@ -26,14 +21,12 @@ public class LeaderboardManager {
         }
         sb.append("\n");
 
-        // 2. Top by Properties Count
         sb.append("🏠 TOP BY PROPERTIES:\n");
         sb.append("---------------------\n");
         String propertiesReport = getTopByProperties(gameState);
         sb.append(propertiesReport);
         sb.append("\n");
 
-        // 3. Financial Interactions
         sb.append("💸 FINANCIAL INTERACTIONS:\n");
         sb.append("--------------------------\n");
         String financialReport = getFinancialStats(gameState);
@@ -43,7 +36,6 @@ public class LeaderboardManager {
     }
 
     private static String getTopByWealth(GameState gameState) {
-        // استفاده از PlayerMaxHeap دستی به جای MyHeap عمومی
         PlayerMaxHeap maxHeap = new PlayerMaxHeap(gameState.getPlayers().length);
         StringBuilder sb = new StringBuilder();
 
@@ -54,7 +46,6 @@ public class LeaderboardManager {
         }
 
         int count = 1;
-        // استخراج سه بازیکن ثروتمند اول
         while (count <= 3) {
             Player p = maxHeap.extractMax();
             if (p == null) break;
@@ -79,7 +70,6 @@ public class LeaderboardManager {
 
         for (Player p : players) {
             if (p != null) {
-                // Count properties
                 final int[] count = {0};
                 p.getOwnedProperties().forEach(prop -> count[0]++);
 

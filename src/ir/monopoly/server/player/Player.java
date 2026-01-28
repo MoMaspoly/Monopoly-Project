@@ -24,7 +24,6 @@ public class Player implements Comparable<Player> {
         this.ownedProperties = new PropertyTree();
     }
 
-    // --- Jail Logic ---
     public void incrementJailTurns() { this.jailTurns++; }
     public int getJailTurns() { return jailTurns; }
     public void resetJailTurns() { this.jailTurns = 0; }
@@ -50,7 +49,6 @@ public class Player implements Comparable<Player> {
         return false;
     }
 
-    // --- Getters & Setters ---
     public int getPlayerId() { return playerId; }
     public String getName() { return name; }
     public int getBalance() { return balance; }

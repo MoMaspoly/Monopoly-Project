@@ -24,6 +24,11 @@ public class GameController {
             return "{\"type\":\"ERROR\",\"message\":\"Player not found!\"}";
         }
 
+        // 🔴 رد درخواست اگر بازیکن ورشکسته باشد
+        if (player.getStatus() == PlayerStatus.BANKRUPT) {
+            return "{\"type\":\"ERROR\",\"message\":\"You are bankrupt and cannot act!\"}";
+        }
+
         // بررسی مزایده فعال
         if (gameState.isAuctionActive()) {
             return handleAuctionCommand(type, pId, extra);
@@ -308,15 +313,26 @@ public class GameController {
         server.broadcast("{\"type\":\"EVENT_LOG\",\"message\":\"" + safeEvent + "\"}");
     }
 
-    // در GameController - به syncGameState() اضافه کنید:
     private void syncGameState() {
         Player currentP = gameState.getTurnManager().getCurrentPlayer();
         String event = gameState.getLastEvent();
 
+        // 🔴 اطلاع ورشکستگی
+        for (Player p : gameState.getPlayers()) {
+            if (p.getStatus() == PlayerStatus.BANKRUPT) {
+                server.broadcast("{\"type\":\"SHOW_CARD\",\"text\":\"" +
+                        escapeJson("💀 " + p.getName() + " went BANKRUPT!") + "\"}");
+                server.broadcast("{\"type\":\"EVENT_LOG\",\"message\":\"" +
+                        escapeJson(p.getName() + " is bankrupt and out of the game.") + "\"}");
+            }
+        }
+
+        // حرکت بازیکن
         if (event.contains("GO") || event.contains("Jail") || event.contains("spaces")) {
             server.broadcast("{\"type\":\"ROLL_UPDATE\",\"playerId\":" + currentP.getPlayerId() + ",\"currentPosition\":" + currentP.getCurrentPosition() + "}");
         }
 
+        // بروزرسانی وضعیت همه بازیکنان
         for (Player p : gameState.getPlayers()) {
             server.broadcast("{\"type\":\"PLAYER_STATS\",\"playerId\":" + p.getPlayerId() + ",\"balance\":" + p.getBalance() + "}");
 
@@ -331,6 +347,7 @@ public class GameController {
             sendPlayerProperties(p);
         }
 
+        // نمایش کارت/رویداد
         if (event.contains("ACTION_") || event.contains("CARD_DRAWN") ||
                 event.contains("AUCTION_") || event.contains("JAIL")) {
             String cleanMsg = event.contains(":") ? event.split(":", 2)[1] : event;
@@ -338,13 +355,13 @@ public class GameController {
             server.broadcast("{\"type\":\"SHOW_CARD\",\"text\":\"" + cleanMsg + "\"}");
         }
 
+        // ثبت در لاگ
         if (!event.isEmpty() && !event.equals("Game Started")) {
             String safeEvent = escapeJson(event);
             server.broadcast("{\"type\":\"EVENT_LOG\",\"message\":\"" + safeEvent + "\"}");
         }
     }
 
-    // متد جدید: ارسال لیست املاک بازیکن
     private void sendPlayerProperties(Player player) {
         StringBuilder propertiesList = new StringBuilder();
 
@@ -363,16 +380,6 @@ public class GameController {
         server.sendToPlayer(player.getPlayerId(),
                 "{\"type\":\"PROPERTY_LIST\",\"playerId\":" + player.getPlayerId() +
                         ",\"properties\":\"" + propertiesStr + "\"}");
-    }
-
-    // متد کمکی برای escape کردن JSON
-    private String escapeJson(String text) {
-        if (text == null) return "";
-        return text.replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-                .replace("\t", "\\t");
     }
 
     private String handleEndTurn(Player p) {
@@ -419,5 +426,15 @@ public class GameController {
             return handleRejectTrade(pId);
         }
         return "{\"type\":\"ERROR\",\"message\":\"Invalid trade command!\"}";
+    }
+
+    // متد کمکی برای escape کردن JSON
+    private String escapeJson(String text) {
+        if (text == null) return "";
+        return text.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
     }
 }

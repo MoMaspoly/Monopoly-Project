@@ -5,10 +5,6 @@ import ir.monopoly.server.player.Player;
 import ir.monopoly.server.property.Property;
 import java.util.List;
 
-/**
- * FIXED: Strictly maps all 40 tiles. Ensures Jail (10) and Go To Jail (30)
- * are correctly indexed and not treated as properties.
- */
 public class GameInitializer {
     public static GameState initializeGame(List<Player> players) {
         Board board = new Board();

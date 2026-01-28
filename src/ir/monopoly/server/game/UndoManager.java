@@ -4,10 +4,7 @@ import ir.monopoly.server.datastructure.MyStack;
 import ir.monopoly.server.player.Player;
 import ir.monopoly.server.property.Property;
 
-/**
- * Manages Undo and Redo operations for the game.
- * Records actions such as money changes, property purchases, construction, and movement.
- */
+
 public class UndoManager {
     private final MyStack<GameAction> undoStack;
     private final MyStack<GameAction> redoStack;
@@ -19,10 +16,6 @@ public class UndoManager {
         this.redoStack = new MyStack<>();
     }
 
-    /**
-     * Records a new action and clears the redo stack.
-     * @param action The action performed by a player.
-     */
     public void recordAction(GameAction action) {
         undoStack.push(action);
         // Once a new action is taken, redo history is invalidated
@@ -31,10 +24,6 @@ public class UndoManager {
         }
     }
 
-    /**
-     * Reverts the last recorded action.
-     * @return true if action was undone, false if no action to undo
-     */
     public boolean undo() {
         if (undoStack.isEmpty()) {
             gameState.addEvent("UNDO: No action to undo.");
@@ -46,7 +35,6 @@ public class UndoManager {
 
         switch (action.getType()) {
             case MONEY_CHANGE:
-                // Revert balance: diff = NewValue - OldValue. Subtract diff from current.
                 int diff = (Integer) action.getNewValue() - (Integer) action.getOldValue();
                 Player pMoney = gameState.getPlayerById(action.getPlayerId());
                 if (pMoney != null) {
@@ -56,19 +44,17 @@ public class UndoManager {
                 return true;
 
             case PROPERTY_PURCHASE:
-                // Revert purchase: give money back and remove ownership
                 Player pPurchase = gameState.getPlayerById(action.getPlayerId());
                 Property purchasedProp = gameState.getPropertyById(action.getTargetId());
                 if (pPurchase != null && purchasedProp != null) {
                     pPurchase.changeBalance(purchasedProp.getPurchasePrice());
                     pPurchase.removeProperty(purchasedProp.getPropertyId());
-                    purchasedProp.clearOwner(); // Critical: Update property object status
+                    purchasedProp.clearOwner();
                     gameState.addEvent("UNDO: Property purchase reverted for " + purchasedProp.getName());
                 }
                 return true;
 
             case CONSTRUCTION:
-                // Revert house/hotel build: refund cost and remove building
                 Player pBuild = gameState.getPlayerById(action.getPlayerId());
                 Property builtProp = gameState.getPropertyById(action.getTargetId());
                 if (pBuild != null && builtProp != null) {
@@ -83,7 +69,6 @@ public class UndoManager {
                 return true;
 
             case MOVEMENT:
-                // Revert player position
                 Player pMove = gameState.getPlayerById(action.getPlayerId());
                 if (pMove != null) {
                     int oldPos = (Integer) action.getOldValue();
@@ -93,16 +78,13 @@ public class UndoManager {
                 return true;
 
             case TRADE:
-                // Revert a completed trade between two players
                 Player sender = gameState.getPlayerById(action.getPlayerId());
                 Player receiver = gameState.getPlayerById(action.getOtherPlayerId());
 
                 if (sender != null && receiver != null) {
-                    // Revert cash exchange
                     sender.changeBalance(action.getRequestedCash() - action.getOfferedCash());
                     receiver.changeBalance(action.getOfferedCash() - action.getRequestedCash());
 
-                    // Swap properties back to original owners
                     for (Property p : action.getOfferedProperties()) {
                         receiver.removeProperty(p.getPropertyId());
                         sender.addProperty(p);
@@ -123,10 +105,6 @@ public class UndoManager {
         }
     }
 
-    /**
-     * Re-applies the last undone action.
-     * @return true if action was redone, false if no action to redo
-     */
     public boolean redo() {
         if (redoStack.isEmpty()) {
             gameState.addEvent("REDO: No action to redo.");

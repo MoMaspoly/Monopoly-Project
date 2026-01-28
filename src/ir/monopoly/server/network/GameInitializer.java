@@ -6,9 +6,6 @@ import ir.monopoly.server.player.Player;
 import ir.monopoly.server.property.Property;
 import java.util.List;
 
-/**
- * Initializes the board with strict index checks to prevent logic overlaps.
- */
 public class GameInitializer {
     public static GameState initializeGame(List<Player> players) {
         Board board = new Board();

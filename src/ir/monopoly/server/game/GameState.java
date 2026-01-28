@@ -7,10 +7,6 @@ import ir.monopoly.server.datastructure.TransactionGraph;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Main state container for the game.
- * Holds players, board, card deck, and tracks game events for the GUI.
- */
 public class GameState {
     private final Player[] players;
     private final Board board;
@@ -33,17 +29,11 @@ public class GameState {
         this.addEvent("Game Started");
     }
 
-    /**
-     * Starts an auction for a property
-     */
     public void startAuction(Property property) {
-        this.auctionManager = new AuctionManager(property, players);
+        this.auctionManager = new AuctionManager(property, players, this);
         addEvent("AUCTION_STARTED: Auction for " + property.getName() + " started. Minimum bid: $10");
     }
 
-    /**
-     * Ends current auction
-     */
     public void endAuction() {
         if (auctionManager != null) {
             auctionManager.forceEndAuction();
@@ -64,18 +54,11 @@ public class GameState {
         return auctionManager;
     }
 
-    /**
-     * Adds a new event to the log.
-     * Used by TileResolver to trigger GUI updates.
-     */
     public void addEvent(String event) {
         eventLog.add(event);
         System.out.println("LOG: " + event);
     }
 
-    /**
-     * Retrieves the most recent event.
-     */
     public String getLastEvent() {
         if (eventLog.isEmpty()) return "";
         return eventLog.get(eventLog.size() - 1);
@@ -96,7 +79,6 @@ public class GameState {
         return null;
     }
 
-    // --- Getters ---
     public Player[] getPlayers() { return players; }
     public Board getBoard() { return board; }
     public CardDeck getCardDeck() { return cardDeck; }
@@ -104,7 +86,6 @@ public class GameState {
     public UndoManager getUndoManager() { return undoManager; }
     public TransactionGraph getTransactionGraph() { return transactionGraph; }
 
-    // --- Trade Management ---
     public TradeOffer getPendingTrade() { return pendingTrade; }
     public void setPendingTrade(TradeOffer offer) { this.pendingTrade = offer; }
     public void clearPendingTrade() { this.pendingTrade = null; }
@@ -117,10 +98,6 @@ public class GameState {
         if (activeCount <= 1) addEvent("GAME_OVER");
     }
 
-    /**
-     * Requirement fix: Top-K ranking update trigger
-     */
     public void updatePlayerRankings(Player p) {
-        // This is handled by the TransactionGraph and LeaderboardManager
     }
 }

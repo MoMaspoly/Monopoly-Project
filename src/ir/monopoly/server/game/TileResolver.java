@@ -11,7 +11,6 @@ public class TileResolver {
     public static void resolveTile(Tile tile, GameState gameState) {
         Player player = gameState.getTurnManager().getCurrentPlayer();
 
-        // 1. CARDS
         if (tile.getTileType() == TileType.CARD) {
             Card card = tile.getName().contains("Chance") ?
                     gameState.getCardDeck().drawChance() :
@@ -21,7 +20,6 @@ public class TileResolver {
             return;
         }
 
-        // 2. GO TO JAIL
         if (tile.getTileType() == TileType.JAIL && tile.getTileId() == 30) {
             player.setStatus(PlayerStatus.IN_JAIL);
             player.setCurrentPosition(10);
@@ -30,7 +28,6 @@ public class TileResolver {
             return;
         }
 
-        // 3. TAXES
         if (tile.getTileType() == TileType.TAX) {
             int tax = (tile.getTileId() == 4) ? 200 : 100;
             player.changeBalance(-tax);
@@ -38,7 +35,6 @@ public class TileResolver {
             return;
         }
 
-        // 4. PROPERTIES
         if (tile.getTileType() == TileType.PROPERTY) {
             handleProperty(tile, gameState, player);
         }
@@ -52,24 +48,32 @@ public class TileResolver {
             gs.addEvent("ACTION_OFFER:Unowned " + prop.getName() + " for $" + prop.getPurchasePrice());
         } else if (ownerId != visitor.getPlayerId() && !prop.isMortgaged()) {
             Player owner = gs.getPlayerById(ownerId);
-            int rent = 0;
+            int rent = calculateRent(prop, gs, owner);
 
-            if (prop.getColorGroup().equalsIgnoreCase("Railroad")) {
-                int count = owner.getOwnedProperties().countColorGroup("Railroad");
-                rent = (int) (25 * Math.pow(2, count - 1));
-            } else if (prop.getColorGroup().equalsIgnoreCase("Utility")) {
-                int diceSum = new Dice().roll()[0] + new Dice().roll()[1]; // Dummy dice for rent calc
-                int count = owner.getOwnedProperties().countColorGroup("Utility");
-                rent = (count == 1) ? diceSum * 4 : diceSum * 10;
-            } else {
-                int ownedInSet = owner.getOwnedProperties().countColorGroup(prop.getColorGroup());
-                int required = (prop.getColorGroup().equals("Brown") || prop.getColorGroup().equals("Dark Blue")) ? 2 : 3;
-                rent = prop.calculateRent(ownedInSet >= required);
+            if (visitor.getBalance() < rent) {
+                BankruptcyManager.processBankruptcy(visitor, owner, gs);
+                return;
             }
 
             visitor.changeBalance(-rent);
             owner.changeBalance(rent);
+            gs.getTransactionGraph().recordTransaction(visitor.getPlayerId(), ownerId, rent);
             gs.addEvent("ACTION_RENT:Paid $" + rent + " rent to " + owner.getName());
+        }
+    }
+
+    private static int calculateRent(Property prop, GameState gs, Player owner) {
+        if (prop.getColorGroup().equalsIgnoreCase("Railroad")) {
+            int count = owner.getOwnedProperties().countColorGroup("Railroad");
+            return (int) (25 * Math.pow(2, count - 1));
+        } else if (prop.getColorGroup().equalsIgnoreCase("Utility")) {
+            int diceSum = new Dice().roll()[0] + new Dice().roll()[1];
+            int count = owner.getOwnedProperties().countColorGroup("Utility");
+            return (count == 1) ? diceSum * 4 : diceSum * 10;
+        } else {
+            int ownedInSet = owner.getOwnedProperties().countColorGroup(prop.getColorGroup());
+            int required = (prop.getColorGroup().equals("Brown") || prop.getColorGroup().equals("Dark Blue")) ? 2 : 3;
+            return prop.calculateRent(ownedInSet >= required);
         }
     }
 }

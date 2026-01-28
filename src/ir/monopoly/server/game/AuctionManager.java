@@ -15,8 +15,9 @@ public class AuctionManager {
     private int currentBidderIndex = 0;
     private boolean roundFinished = false;
     private boolean auctionActive = false;
+    private final GameState gameState;
 
-    public AuctionManager(Property property, Player[] players) {
+    public AuctionManager(Property property, Player[] players, GameState gameState) {
         this.property = property;
         this.activeBidders = new ArrayList<>();
         for (Player p : players) {
@@ -24,8 +25,9 @@ public class AuctionManager {
                 activeBidders.add(p);
             }
         }
-        this.currentHighestBid = 10; // حداقل پیشنهاد
+        this.currentHighestBid = 10;
         this.auctionActive = true;
+        this.gameState = gameState;
     }
 
     public boolean isAuctionActive() {
@@ -35,13 +37,15 @@ public class AuctionManager {
     public boolean placeBid(Player player, int amount) {
         if (!auctionActive || !activeBidders.contains(player)) return false;
         if (amount <= currentHighestBid) return false;
-        if (player.getBalance() < amount) return false;
+        if (player.getBalance() < amount) {
+            BankruptcyManager.processBankruptcy(player, null, gameState);
+            return false;
+        }
 
         currentHighestBid = amount;
         currentWinner = player;
         roundFinished = false;
 
-        // به بازیکن بعدی برو
         currentBidderIndex = (activeBidders.indexOf(player) + 1) % activeBidders.size();
         if (currentBidderIndex == 0) roundFinished = true;
 
@@ -57,7 +61,6 @@ public class AuctionManager {
             return true;
         }
 
-        // تنظیم مجدد ایندکس
         if (currentBidderIndex >= activeBidders.size()) {
             currentBidderIndex = 0;
             roundFinished = true;
@@ -85,7 +88,6 @@ public class AuctionManager {
         if (currentWinner != null) {
             endAuction();
         } else if (!activeBidders.isEmpty()) {
-            // اگر کسی پیشنهاد نداد، اولین بازیکن برنده با حداقل قیمت
             Player winner = activeBidders.get(0);
             if (winner.getBalance() >= 10) {
                 winner.changeBalance(-10);

@@ -6,10 +6,6 @@ import ir.monopoly.server.player.PlayerStatus;
 import java.io.*;
 import java.net.Socket;
 
-/**
- * Handles individual client connections.
- * Bridges the network socket with the GameController logic.
- */
 public class ClientHandler extends Thread {
     private final Socket socket;
     private final int playerId;
@@ -29,7 +25,6 @@ public class ClientHandler extends Thread {
             out = new PrintWriter(socket.getOutputStream(), true);
             in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
 
-            // Initial connection acknowledgement
             String welcome = "{\"type\":\"CONNECTED\",\"playerId\":" + playerId + ",\"message\":\"Welcome to Monopoly!\"}";
             sendMessage(welcome);
 
@@ -38,15 +33,13 @@ public class ClientHandler extends Thread {
                 System.out.println("Command from Player " + playerId + ": " + line);
 
                 try {
-                    // Split command: e.g., "TRADE 2 500" -> type: TRADE, extra: 2 500
+
                     String[] parts = line.trim().split("\\s+", 2);
                     String commandType = parts[0].toUpperCase();
                     String extra = parts.length > 1 ? parts[1] : "";
 
-                    // Route command to GameController via the Server reference
                     String response = server.getGameController().handleCommand(commandType, playerId, extra);
 
-                    // If there is a direct response (like an error), send it to this specific player
                     if (response != null && !response.isEmpty()) {
                         sendMessage(response);
                     }
@@ -62,9 +55,6 @@ public class ClientHandler extends Thread {
         }
     }
 
-    /**
-     * Logic for when a player leaves the game unexpectedly.
-     */
     private void handleDisconnect() {
         System.out.println("Player " + playerId + " disconnected.");
         server.removeClient(this);
@@ -74,7 +64,7 @@ public class ClientHandler extends Thread {
             if (gs != null) {
                 Player p = gs.getPlayerById(playerId);
                 if (p != null) {
-                    p.setStatus(PlayerStatus.BANKRUPT); // Mark player as bankrupt on exit
+                    p.setStatus(PlayerStatus.BANKRUPT);
 
                     String msg = "{\"type\":\"PLAYER_LEFT\",\"playerId\":" + playerId +
                             ",\"playerName\":\"" + p.getName() +
@@ -87,9 +77,6 @@ public class ClientHandler extends Thread {
         }
     }
 
-    /**
-     * Sends a raw message string to this specific client.
-     */
     public void sendMessage(String message) {
         if (out != null && !socket.isClosed()) {
             out.println(message);

@@ -24,6 +24,7 @@ public class BankruptcyManager {
             property.removeHouses(property.getHouseCount());
             if (property.hasHotel()) property.removeHotel();
             gameState.addEvent("Property " + property.getName() + " returned to the bank.");
+            bankruptPlayer.removeProperty(property.getPropertyId());
         });
 
         gameState.checkGameOver();

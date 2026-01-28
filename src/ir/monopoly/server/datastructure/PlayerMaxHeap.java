@@ -69,7 +69,7 @@ public class PlayerMaxHeap {
         return p.getTotalWealth();
     }
 
-    // متدهای جدید برای کامل‌تر شدن کلاس
+
     public boolean isEmpty() {
         return size == 0;
     }
