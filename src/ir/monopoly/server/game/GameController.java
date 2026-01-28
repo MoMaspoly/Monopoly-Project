@@ -30,7 +30,15 @@ public class GameController {
             case "TRADE": return handleTradeProposal(player, extra);
             case "ACCEPT_TRADE": return handleAcceptTrade(pId);
             case "END_TURN": return handleEndTurn(player);
-            case "GET_TOP_K": return "{\"type\":\"SHOW_CARD\",\"text\":\"" + LeaderboardManager.getTopKReport(gameState) + "\"}";
+            case "GET_TOP_K":
+                String report = LeaderboardManager.getTopKReport(gameState);
+                // Escape JSON special characters
+                report = report.replace("\\", "\\\\")
+                        .replace("\"", "\\\"")
+                        .replace("\n", "\\n")
+                        .replace("\r", "\\r")
+                        .replace("\t", "\\t");
+                return "{\"type\":\"SHOW_CARD\",\"text\":\"" + report + "\"}";
             case "UNDO":
                 boolean undone = gameState.getUndoManager().undo();
                 if (undone) {
@@ -66,11 +74,21 @@ public class GameController {
         // Send event message
         if (lastEvent.contains("UNDO:") || lastEvent.contains("REDO:")) {
             String cleanMsg = lastEvent.contains(":") ? lastEvent.split(":", 2)[1] : lastEvent;
+            cleanMsg = cleanMsg.replace("\\", "\\\\")
+                    .replace("\"", "\\\"")
+                    .replace("\n", "\\n")
+                    .replace("\r", "\\r")
+                    .replace("\t", "\\t");
             server.broadcast("{\"type\":\"SHOW_CARD\",\"text\":\"" + cleanMsg + "\"}");
         }
 
         // Send to log
-        server.broadcast("{\"type\":\"EVENT_LOG\",\"message\":\"" + lastEvent + "\"}");
+        String safeEvent = lastEvent.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
+        server.broadcast("{\"type\":\"EVENT_LOG\",\"message\":\"" + safeEvent + "\"}");
     }
 
     private String handleRoll(Player player) {
@@ -150,12 +168,22 @@ public class GameController {
         // نمایش کارت یا پیام اکشن
         if (event.contains("ACTION_") || event.contains("CARD_DRAWN")) {
             String cleanMsg = event.contains(":") ? event.split(":", 2)[1] : event;
+            cleanMsg = cleanMsg.replace("\\", "\\\\")
+                    .replace("\"", "\\\"")
+                    .replace("\n", "\\n")
+                    .replace("\r", "\\r")
+                    .replace("\t", "\\t");
             server.broadcast("{\"type\":\"SHOW_CARD\",\"text\":\"" + cleanMsg + "\"}");
         }
 
         // ارسال لاگ رویداد
         if (!event.isEmpty() && !event.equals("Game Started")) {
-            server.broadcast("{\"type\":\"EVENT_LOG\",\"message\":\"" + event + "\"}");
+            String safeEvent = event.replace("\\", "\\\\")
+                    .replace("\"", "\\\"")
+                    .replace("\n", "\\n")
+                    .replace("\r", "\\r")
+                    .replace("\t", "\\t");
+            server.broadcast("{\"type\":\"EVENT_LOG\",\"message\":\"" + safeEvent + "\"}");
         }
     }
 

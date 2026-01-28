@@ -35,7 +35,7 @@ public class MonopolyGUI extends Application {
     private TextArea logArea;
     private Label balanceLabel, playerInfoLabel, statusLabel;
     private ListView<String> propertyList;
-    private Button btnRoll, btnBuy, btnTrade, btnEndTurn, btnUndo, btnRedo;
+    private Button btnRoll, btnBuy, btnTrade, btnEndTurn, btnUndo, btnRedo, btnLeaderboard;
 
     private final Map<Integer, double[]> tileCoords = new HashMap<>();
     private final Map<Integer, Circle> playerTokens = new HashMap<>();
@@ -129,7 +129,15 @@ public class MonopolyGUI extends Application {
         statusLabel = new Label("Waiting for players...");
         statusLabel.setTextFill(Color.FIREBRICK);
 
-        box.getChildren().addAll(playerInfoLabel, balanceLabel, new Separator(), new Label("Properties:"), propertyList, new Label("Log:"), logArea, statusLabel);
+        // Add Leaderboard button to right panel
+        btnLeaderboard = new Button("🏆 LEADERBOARD");
+        btnLeaderboard.setStyle("-fx-background-color: #9b59b6; -fx-text-fill: white; -fx-font-weight: bold; -fx-background-radius: 10;");
+        btnLeaderboard.setMaxWidth(Double.MAX_VALUE);
+        btnLeaderboard.setOnAction(e -> client.sendMessage("GET_TOP_K"));
+
+        box.getChildren().addAll(playerInfoLabel, balanceLabel, new Separator(),
+                new Label("Properties:"), propertyList, new Separator(),
+                btnLeaderboard, new Separator(), new Label("Log:"), logArea, statusLabel);
         return box;
     }
 
@@ -167,68 +175,116 @@ public class MonopolyGUI extends Application {
 
     private void processMessage(String json) {
         Platform.runLater(() -> {
-            String type = getJsonVal(json, "type");
-            String msg = getJsonVal(json, "message");
+            try {
+                String type = getJsonVal(json, "type");
+                String msg = getJsonVal(json, "message");
 
-            switch (type) {
-                case "CONNECTED" -> {
-                    myPlayerId = Integer.parseInt(getJsonVal(json, "playerId"));
-                    playerInfoLabel.setText("👤 Player " + myPlayerId);
-                    logArea.appendText("➤ Connected as Player " + myPlayerId + "\n");
-                }
-                case "TURN_UPDATE" -> {
-                    int curr = Integer.parseInt(getJsonVal(json, "currentPlayer"));
-                    boolean isMe = (curr == myPlayerId);
+                switch (type) {
+                    case "CONNECTED" -> {
+                        myPlayerId = Integer.parseInt(getJsonVal(json, "playerId"));
+                        playerInfoLabel.setText("👤 Player " + myPlayerId);
+                        logArea.appendText("➤ Connected as Player " + myPlayerId + "\n");
+                    }
+                    case "TURN_UPDATE" -> {
+                        int curr = Integer.parseInt(getJsonVal(json, "currentPlayer"));
+                        boolean isMe = (curr == myPlayerId);
 
-                    // RE-ENABLE ROLL BUTTON FOR NEW TURN
-                    if (isMe) hasRolledThisTurn = false;
+                        // RE-ENABLE ROLL BUTTON FOR NEW TURN
+                        if (isMe) hasRolledThisTurn = false;
 
-                    // Enable/disable buttons based on turn
-                    btnRoll.setDisable(!isMe || hasRolledThisTurn);
-                    btnBuy.setDisable(!isMe);
-                    btnUndo.setDisable(!isMe);  // Only active player can undo
-                    btnRedo.setDisable(!isMe);  // Only active player can redo
-                    btnEndTurn.setDisable(!isMe);
-                    statusLabel.setText(isMe ? "⭐ YOUR TURN" : "Wait for P" + curr);
+                        // Enable/disable buttons based on turn
+                        btnRoll.setDisable(!isMe || hasRolledThisTurn);
+                        btnBuy.setDisable(!isMe);
+                        btnUndo.setDisable(!isMe);  // Only active player can undo
+                        btnRedo.setDisable(!isMe);  // Only active player can redo
+                        btnEndTurn.setDisable(!isMe);
+                        statusLabel.setText(isMe ? "⭐ YOUR TURN" : "Wait for P" + curr);
 
-                    logArea.appendText("➤ Turn: Player " + curr + "\n");
-                }
-                case "ROLL_UPDATE" -> {
-                    int pId = Integer.parseInt(getJsonVal(json, "playerId"));
-                    int pos = Integer.parseInt(getJsonVal(json, "currentPosition"));
-                    moveToken(pId, pos);
-                    logArea.appendText("➤ Player " + pId + " moved to position " + pos + "\n");
-                }
-                case "PLAYER_STATS" -> {
-                    int playerId = Integer.parseInt(getJsonVal(json, "playerId"));
-                    int balance = Integer.parseInt(getJsonVal(json, "balance"));
-                    if (playerId == myPlayerId) {
-                        balanceLabel.setText("💰 Balance: $" + balance);
+                        logArea.appendText("➤ Turn: Player " + curr + "\n");
+                    }
+                    case "ROLL_UPDATE" -> {
+                        int pId = Integer.parseInt(getJsonVal(json, "playerId"));
+                        int pos = Integer.parseInt(getJsonVal(json, "currentPosition"));
+                        moveToken(pId, pos);
+                        logArea.appendText("➤ Player " + pId + " moved to position " + pos + "\n");
+                    }
+                    case "PLAYER_STATS" -> {
+                        int playerId = Integer.parseInt(getJsonVal(json, "playerId"));
+                        int balance = Integer.parseInt(getJsonVal(json, "balance"));
+                        if (playerId == myPlayerId) {
+                            balanceLabel.setText("💰 Balance: $" + balance);
+                        }
+                    }
+                    case "SHOW_CARD" -> {
+                        String text = getJsonVal(json, "text");
+                        // Unescape JSON string
+                        text = text.replace("\\n", "\n")
+                                .replace("\\r", "\r")
+                                .replace("\\t", "\t")
+                                .replace("\\\"", "\"")
+                                .replace("\\\\", "\\");
+
+                        // اگر متن Leaderboard باشد، در Alert بزرگتر نشان می‌دهیم
+                        if (text.contains("MONOPOLY LEADERBOARD") || text.contains("TOP 3 BY WEALTH")) {
+                            showLeaderboardDialog(text);
+                        } else {
+                            logArea.appendText("➤ Card: " + text + "\n");
+                            Alert a = new Alert(Alert.AlertType.INFORMATION, text);
+                            a.setHeaderText("Card Draw");
+                            a.show();
+                        }
+                    }
+                    case "EVENT_LOG" -> {
+                        String unescapedMsg = msg.replace("\\n", "\n")
+                                .replace("\\r", "\r")
+                                .replace("\\t", "\t")
+                                .replace("\\\"", "\"")
+                                .replace("\\\\", "\\");
+                        logArea.appendText("➤ " + unescapedMsg + "\n");
+                    }
+                    case "ERROR" -> {
+                        String unescapedMsg = msg.replace("\\n", "\n")
+                                .replace("\\r", "\r")
+                                .replace("\\t", "\t")
+                                .replace("\\\"", "\"")
+                                .replace("\\\\", "\\");
+                        logArea.appendText("❌ Error: " + unescapedMsg + "\n");
+                        Alert a = new Alert(Alert.AlertType.ERROR, unescapedMsg);
+                        a.setHeaderText("Error");
+                        a.show();
+                    }
+                    default -> {
+                        if (!msg.isEmpty()) {
+                            String unescapedMsg = msg.replace("\\n", "\n")
+                                    .replace("\\r", "\r")
+                                    .replace("\\t", "\t")
+                                    .replace("\\\"", "\"")
+                                    .replace("\\\\", "\\");
+                            logArea.appendText("➤ " + unescapedMsg + "\n");
+                        }
                     }
                 }
-                case "SHOW_CARD" -> {
-                    String text = getJsonVal(json, "text");
-                    logArea.appendText("➤ Card: " + text + "\n");
-                    Alert a = new Alert(Alert.AlertType.INFORMATION, text);
-                    a.setHeaderText("Card Draw");
-                    a.show();
-                }
-                case "EVENT_LOG" -> {
-                    logArea.appendText("➤ " + msg + "\n");
-                }
-                case "ERROR" -> {
-                    logArea.appendText("❌ Error: " + msg + "\n");
-                    Alert a = new Alert(Alert.AlertType.ERROR, msg);
-                    a.setHeaderText("Error");
-                    a.show();
-                }
-                default -> {
-                    if (!msg.isEmpty()) {
-                        logArea.appendText("➤ " + msg + "\n");
-                    }
-                }
+            } catch (Exception e) {
+                logArea.appendText("❌ Error processing message: " + e.getMessage() + "\n");
+                logArea.appendText("Raw JSON: " + json + "\n");
             }
         });
+    }
+
+    private void showLeaderboardDialog(String leaderboardText) {
+        TextArea textArea = new TextArea(leaderboardText);
+        textArea.setEditable(false);
+        textArea.setWrapText(true);
+        textArea.setPrefRowCount(15);
+        textArea.setPrefColumnCount(30);
+        textArea.setStyle("-fx-font-family: 'Consolas'; -fx-font-size: 14px;");
+
+        Dialog<Void> dialog = new Dialog<>();
+        dialog.setTitle("🏆 Leaderboard");
+        dialog.setHeaderText("Top Players Ranking");
+        dialog.getDialogPane().setContent(textArea);
+        dialog.getDialogPane().getButtonTypes().add(ButtonType.OK);
+        dialog.showAndWait();
     }
 
     private void moveToken(int pId, int tileIdx) {

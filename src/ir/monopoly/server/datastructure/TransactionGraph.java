@@ -34,4 +34,11 @@ public class TransactionGraph {
         for (int i = 1; i <= numPlayers; i++) sum += matrix[i][playerId];
         return sum;
     }
+
+    /**
+     * Get net balance (received - paid)
+     */
+    public int getNetBalance(int playerId) {
+        return getTotalReceivedBy(playerId) - getTotalPaidBy(playerId);
+    }
 }
