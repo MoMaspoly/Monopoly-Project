@@ -26,7 +26,9 @@ import javafx.geometry.Rectangle2D;
 
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class MonopolyGUI extends Application {
@@ -47,6 +49,7 @@ public class MonopolyGUI extends Application {
     private Button btnRoll, btnBuy, btnTrade, btnEndTurn, btnUndo, btnRedo, btnLeaderboard;
     private Button btnPass, btnBid;
     private Button btnJailDouble, btnJailPay, btnJailCard;
+    private Button btnMortgage, btnUnmortgage, btnBuild;
     private TextField bidAmountField;
     private VBox auctionPanel;
     private VBox jailPanel;
@@ -264,6 +267,9 @@ public class MonopolyGUI extends Application {
         btnRoll = createBtn("🎲 ROLL", "#D4AF37");
         btnBuy = createBtn("🏠 BUY", "#27ae60");
         btnTrade = createBtn("🤝 TRADE", "#2980b9");
+        btnMortgage = createBtn("🏦 MORTGAGE", "#e74c3c");
+        btnUnmortgage = createBtn("💰 UNMORTGAGE", "#2ecc71");
+        btnBuild = createBtn("🏗️ BUILD", "#f39c12");
         btnUndo = createBtn("↶ UNDO", "#8e44ad");
         btnRedo = createBtn("↷ REDO", "#3498db");
         btnEndTurn = createBtn("⏭ END", "#c0392b");
@@ -289,13 +295,16 @@ public class MonopolyGUI extends Application {
                 });
             });
         });
+        btnMortgage.setOnAction(e -> showMortgageDialog());
+        btnUnmortgage.setOnAction(e -> showUnmortgageDialog());
+        btnBuild.setOnAction(e -> showBuildDialog());
         btnUndo.setOnAction(e -> client.sendMessage("UNDO"));
         btnRedo.setOnAction(e -> client.sendMessage("REDO"));
         btnEndTurn.setOnAction(e -> client.sendMessage("END_TURN"));
 
         updateControlStates();
 
-        box.getChildren().addAll(btnRoll, btnBuy, btnTrade, btnUndo, btnRedo, btnEndTurn);
+        box.getChildren().addAll(btnRoll, btnBuy, btnTrade, btnMortgage, btnUnmortgage, btnBuild, btnUndo, btnRedo, btnEndTurn);
         return box;
     }
 
@@ -531,7 +540,7 @@ public class MonopolyGUI extends Application {
 
         for (String prop : properties) {
             String[] parts = prop.split(",");
-            if (parts.length >= 6) {
+            if (parts.length >= 7) {
                 try {
                     String name = parts[0];
                     String color = parts[1];
@@ -539,11 +548,13 @@ public class MonopolyGUI extends Application {
                     boolean hotel = Boolean.parseBoolean(parts[3]);
                     boolean mortgaged = Boolean.parseBoolean(parts[4]);
                     int price = Integer.parseInt(parts[5]);
+                    int propertyId = Integer.parseInt(parts[6]);
 
                     StringBuilder display = new StringBuilder();
                     display.append("🏠 ").append(name);
                     display.append(" (").append(color).append(")");
                     display.append(" - $").append(price);
+                    display.append(" ID:").append(propertyId);
 
                     if (hotel) {
                         display.append(" 🏨");
@@ -574,6 +585,9 @@ public class MonopolyGUI extends Application {
         btnRoll.setDisable(!canRollNormal && !canRollInJail);
         btnBuy.setDisable(!isMyTurn || !awaitingBuyDecision || auctionActive || inJail);
         btnTrade.setDisable(!isMyTurn || auctionActive || inJail);
+        btnMortgage.setDisable(!isMyTurn || auctionActive || inJail);
+        btnUnmortgage.setDisable(!isMyTurn || auctionActive || inJail);
+        btnBuild.setDisable(!isMyTurn || auctionActive || inJail);
         btnEndTurn.setDisable(!isMyTurn || auctionActive);
         btnUndo.setDisable(!isMyTurn || auctionActive);
         btnRedo.setDisable(!isMyTurn || auctionActive);
@@ -698,6 +712,117 @@ public class MonopolyGUI extends Application {
         if (i == 12 || i == 28) return iconCache.get("utility");
         if (i == 5 || i == 15 || i == 25 || i == 35) return iconCache.get("train");
         return null;
+    }
+
+    private void showMortgageDialog() {
+        List<String> properties = getPlayerProperties();
+        if (properties.isEmpty()) {
+            showAlert("No Properties", "You don't own any properties to mortgage.");
+            return;
+        }
+
+        ChoiceDialog<String> dialog = new ChoiceDialog<>(properties.get(0), properties);
+        dialog.setTitle("Mortgage Property");
+        dialog.setHeaderText("Select a property to mortgage");
+        dialog.setContentText("Property:");
+
+        dialog.showAndWait().ifPresent(propertyStr -> {
+            if (!propertyStr.isEmpty()) {
+                int propertyId = extractPropertyId(propertyStr);
+                if (propertyId != -1) {
+                    client.sendMessage("MORTGAGE " + propertyId);
+                }
+            }
+        });
+    }
+
+    private void showUnmortgageDialog() {
+        List<String> properties = getMortgagedProperties();
+        if (properties.isEmpty()) {
+            showAlert("No Mortgaged Properties", "You don't have any mortgaged properties.");
+            return;
+        }
+
+        ChoiceDialog<String> dialog = new ChoiceDialog<>(properties.get(0), properties);
+        dialog.setTitle("Unmortgage Property");
+        dialog.setHeaderText("Select a mortgaged property to free");
+        dialog.setContentText("Property:");
+
+        dialog.showAndWait().ifPresent(propertyStr -> {
+            if (!propertyStr.isEmpty()) {
+                int propertyId = extractPropertyId(propertyStr);
+                if (propertyId != -1) {
+                    client.sendMessage("UNMORTGAGE " + propertyId);
+                }
+            }
+        });
+    }
+
+    private void showBuildDialog() {
+        List<String> properties = getBuildableProperties();
+        if (properties.isEmpty()) {
+            showAlert("No Buildable Properties", "No properties available for building.");
+            return;
+        }
+
+        ChoiceDialog<String> dialog = new ChoiceDialog<>(properties.get(0), properties);
+        dialog.setTitle("Build House/Hotel");
+        dialog.setHeaderText("Select a property to build on");
+        dialog.setContentText("Property:");
+
+        dialog.showAndWait().ifPresent(propertyStr -> {
+            if (!propertyStr.isEmpty()) {
+                int propertyId = extractPropertyId(propertyStr);
+                if (propertyId != -1) {
+                    client.sendMessage("BUILD " + propertyId);
+                }
+            }
+        });
+    }
+
+    private List<String> getPlayerProperties() {
+        List<String> properties = new ArrayList<>();
+        for (String item : propertyList.getItems()) {
+            if (!item.contains("No properties") && !item.contains("⚠️")) {
+                properties.add(item);
+            }
+        }
+        return properties;
+    }
+
+    private List<String> getMortgagedProperties() {
+        List<String> properties = new ArrayList<>();
+        for (String item : propertyList.getItems()) {
+            if (item.contains("⚠️")) {
+                properties.add(item);
+            }
+        }
+        return properties;
+    }
+
+    private List<String> getBuildableProperties() {
+        List<String> properties = new ArrayList<>();
+        for (String item : propertyList.getItems()) {
+            if (!item.contains("No properties") && !item.contains("⚠️") &&
+                    !item.contains("🏨") && !item.contains("🏠×4")) {
+                properties.add(item);
+            }
+        }
+        return properties;
+    }
+
+    private int extractPropertyId(String propertyStr) {
+        try {
+            String[] parts = propertyStr.split(" ");
+            for (String part : parts) {
+                if (part.startsWith("ID:")) {
+                    return Integer.parseInt(part.substring(3));
+                }
+            }
+        } catch (Exception e) {
+            logArea.appendText("Error extracting property ID from: " + propertyStr + "\n");
+        }
+        return -1;
     }
 
     private void connectToServer() {

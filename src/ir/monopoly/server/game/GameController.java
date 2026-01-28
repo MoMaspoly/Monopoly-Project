@@ -55,6 +55,9 @@ public class GameController {
             case "TRADE": return handleTradeProposal(player, extra);
             case "ACCEPT_TRADE": return handleAcceptTrade(pId);
             case "REJECT_TRADE": return handleRejectTrade(pId);
+            case "MORTGAGE": return handleMortgage(player, extra);
+            case "UNMORTGAGE": return handleUnmortgage(player, extra);
+            case "BUILD": return handleBuild(player, extra);
             case "END_TURN": return handleEndTurn(player);
             case "GET_TOP_K":
                 String report = LeaderboardManager.getTopKReport(gameState);
@@ -375,7 +378,7 @@ public class GameController {
                     .append(",").append(property.getPurchasePrice());
         });
 
-        String propertiesStr = escapeJson(propertiesList.toString());
+        String propertiesStr = escapeJson(player.getPropertiesString());
 
         server.sendToPlayer(player.getPlayerId(),
                 "{\"type\":\"PROPERTY_LIST\",\"playerId\":" + player.getPlayerId() +
@@ -436,5 +439,65 @@ public class GameController {
                 .replace("\n", "\\n")
                 .replace("\r", "\\r")
                 .replace("\t", "\\t");
+    }
+
+    private String handleMortgage(Player player, String propertyIdStr) {
+        try {
+            int propertyId = Integer.parseInt(propertyIdStr);
+            Property property = gameState.getPropertyById(propertyId);
+            if (property == null) {
+                return "{\"type\":\"ERROR\",\"message\":\"Property not found!\"}";
+            }
+
+            String result = MortgageManager.mortgageProperty(player, property, gameState);
+            if (result.equals("SUCCESS")) {
+                syncGameState();
+                return null;
+            } else {
+                return "{\"type\":\"ERROR\",\"message\":\"" + escapeJson(result) + "\"}";
+            }
+        } catch (NumberFormatException e) {
+            return "{\"type\":\"ERROR\",\"message\":\"Invalid property ID!\"}";
+        }
+    }
+
+    private String handleUnmortgage(Player player, String propertyIdStr) {
+        try {
+            int propertyId = Integer.parseInt(propertyIdStr);
+            Property property = gameState.getPropertyById(propertyId);
+            if (property == null) {
+                return "{\"type\":\"ERROR\",\"message\":\"Property not found!\"}";
+            }
+
+            String result = MortgageManager.unmortgageProperty(player, property, gameState);
+            if (result.equals("SUCCESS")) {
+                syncGameState();
+                return null;
+            } else {
+                return "{\"type\":\"ERROR\",\"message\":\"" + escapeJson(result) + "\"}";
+            }
+        } catch (NumberFormatException e) {
+            return "{\"type\":\"ERROR\",\"message\":\"Invalid property ID!\"}";
+        }
+    }
+
+    private String handleBuild(Player player, String extra) {
+        try {
+            int propertyId = Integer.parseInt(extra.trim());
+            Property property = gameState.getPropertyById(propertyId);
+            if (property == null) {
+                return "{\"type\":\"ERROR\",\"message\":\"Property not found!\"}";
+            }
+
+            String result = PropertyService.buildOnProperty(player, property, gameState);
+            if (result.equals("SUCCESS")) {
+                syncGameState();
+                return null;
+            } else {
+                return "{\"type\":\"ERROR\",\"message\":\"" + escapeJson(result) + "\"}";
+            }
+        } catch (NumberFormatException e) {
+            return "{\"type\":\"ERROR\",\"message\":\"Invalid property ID!\"}";
+        }
     }
 }

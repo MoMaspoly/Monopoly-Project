@@ -77,6 +77,21 @@ public class Player implements Comparable<Player> {
         return this.balance + sum[0];
     }
 
+    public String getPropertiesString() {
+        StringBuilder sb = new StringBuilder();
+        ownedProperties.forEach(p -> {
+            if (sb.length() > 0) sb.append("|");
+            sb.append(p.getName())
+                    .append(",").append(p.getColorGroup())
+                    .append(",").append(p.getHouseCount())
+                    .append(",").append(p.hasHotel())
+                    .append(",").append(p.isMortgaged())
+                    .append(",").append(p.getPurchasePrice())
+                    .append(",").append(p.getPropertyId());
+        });
+        return sb.toString();
+    }
+
     @Override
     public int compareTo(Player other) {
         return Integer.compare(this.getTotalWealth(), other.getTotalWealth());
