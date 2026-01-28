@@ -24,25 +24,20 @@ public class GameController {
             return "{\"type\":\"ERROR\",\"message\":\"Player not found!\"}";
         }
 
-        // 🔴 رد درخواست اگر بازیکن ورشکسته باشد
         if (player.getStatus() == PlayerStatus.BANKRUPT) {
             return "{\"type\":\"ERROR\",\"message\":\"You are bankrupt and cannot act!\"}";
         }
 
-        // بررسی مزایده فعال
         if (gameState.isAuctionActive()) {
             return handleAuctionCommand(type, pId, extra);
         }
 
-        // بررسی ترید pending
         if (type.equals("ACCEPT_TRADE") || type.equals("REJECT_TRADE")) {
             return handleTradeCommand(type, pId, extra);
         }
 
-        // بازیکن فعلی
         Player currentPlayer = gameState.getTurnManager().getCurrentPlayer();
 
-        // فقط بازیکن فعلی اجازه دستور دادن دارد (بجز مزایده و ترید)
         if (currentPlayer.getPlayerId() != pId && !type.equals("ACCEPT_TRADE") && !type.equals("REJECT_TRADE")) {
             return "{\"type\":\"ERROR\",\"message\":\"Wait for your turn!\"}";
         }
@@ -143,14 +138,11 @@ public class GameController {
             int winningBid = auction.getCurrentHighestBid();
 
             if (winner != null) {
-                // Record transaction for Top-K
                 gameState.getTransactionGraph().recordTransaction(winner.getPlayerId(), 0, winningBid); // 0 = bank
 
-                // Add event
                 gameState.addEvent("AUCTION_WON: " + winner.getName() + " won " + property.getName() + " for $" + winningBid);
             }
 
-            // Broadcast auction end
             server.broadcast("{\"type\":\"AUCTION_END\",\"winner\":" + (winner != null ? winner.getPlayerId() : -1) +
                     ",\"property\":\"" + escapeJson(property.getName()) + "\",\"amount\":" + winningBid + "}");
 
@@ -160,7 +152,6 @@ public class GameController {
     }
 
     private String handleRoll(Player player) {
-        // اگر مزایده فعال است، نمی‌توان Roll زد
         if (gameState.isAuctionActive()) {
             return "{\"type\":\"ERROR\",\"message\":\"Finish the auction first!\"}";
         }
@@ -169,7 +160,6 @@ public class GameController {
         dice.roll();
         int total = dice.getSum();
 
-        // منطق زندان
         if (player.getStatus() == PlayerStatus.IN_JAIL) {
             if (dice.isDoubles()) {
                 player.releaseFromJail();
@@ -198,8 +188,6 @@ public class GameController {
         int oldPosition = player.getCurrentPosition();
         int newPos = (oldPosition + total) % 40;
         player.setCurrentPosition(newPos);
-
-        // ثبت action برای حرکت
         gameState.getUndoManager().recordAction(new GameAction(
                 GameAction.ActionType.MOVEMENT,
                 player.getPlayerId(),
@@ -210,18 +198,14 @@ public class GameController {
 
         server.broadcast("{\"type\":\"ROLL_UPDATE\",\"playerId\":" + player.getPlayerId() + ",\"currentPosition\":" + newPos + "}");
 
-        // تحلیل مقصد
         Tile tile = gameState.getBoard().getTileAt(newPos);
         TileResolver.resolveTile(tile, gameState);
 
-        // اگر روی ملک بدون مالک فرود آمد
         if (tile.getTileType() == TileType.PROPERTY) {
             Property prop = (Property) tile.getTileData();
             if (prop.getOwnerId() == null) {
                 propertyForSale = prop;
                 awaitingBuyDecision = true;
-
-                // به بازیکن گزینه خرید بده
                 String message = "You landed on " + prop.getName() + ". Price: $" + prop.getPurchasePrice() +
                         ". Your balance: $" + player.getBalance() +
                         ". Do you want to buy?";
@@ -260,17 +244,14 @@ public class GameController {
             }
         }
 
-        // اگر پول کافی ندارد یا خرید نکرد، مزایده شروع شود
         return handlePass(player);
     }
 
     private String handlePass(Player player) {
         if (awaitingBuyDecision && propertyForSale != null) {
-            // شروع مزایده
             gameState.startAuction(propertyForSale);
             awaitingBuyDecision = false;
 
-            // Broadcast شروع مزایده
             broadcastAuctionStatus();
             server.broadcast("{\"type\":\"AUCTION_START\",\"property\":\"" + escapeJson(propertyForSale.getName()) +
                     "\",\"minBid\":10,\"message\":\"Auction started for " + escapeJson(propertyForSale.getName()) + "\"}");
@@ -283,35 +264,26 @@ public class GameController {
     }
 
     private String handleBid(Player player, String amountStr) {
-        // این فقط برای زمانی است که مستقیماً BID فرستاده شود (نه در مزایده)
         return "{\"type\":\"ERROR\",\"message\":\"No active auction! Use PASS to start auction.\"}";
     }
 
-    /**
-     * Special sync for undo/redo operations
-     */
     private void syncGameStateAfterUndoRedo() {
         String lastEvent = gameState.getLastEvent();
 
-        // Update ALL players' stats
         for (Player p : gameState.getPlayers()) {
             server.broadcast("{\"type\":\"PLAYER_STATS\",\"playerId\":" + p.getPlayerId() + ",\"balance\":" + p.getBalance() + "}");
             sendPlayerProperties(p);
         }
 
-        // Update ALL players' positions
         for (Player p : gameState.getPlayers()) {
             server.broadcast("{\"type\":\"ROLL_UPDATE\",\"playerId\":" + p.getPlayerId() + ",\"currentPosition\":" + p.getCurrentPosition() + "}");
         }
-
-        // Send event message
         if (lastEvent.contains("UNDO:") || lastEvent.contains("REDO:")) {
             String cleanMsg = lastEvent.contains(":") ? lastEvent.split(":", 2)[1] : lastEvent;
             cleanMsg = escapeJson(cleanMsg);
             server.broadcast("{\"type\":\"SHOW_CARD\",\"text\":\"" + cleanMsg + "\"}");
         }
 
-        // Send to log
         String safeEvent = escapeJson(lastEvent);
         server.broadcast("{\"type\":\"EVENT_LOG\",\"message\":\"" + safeEvent + "\"}");
     }
@@ -320,7 +292,6 @@ public class GameController {
         Player currentP = gameState.getTurnManager().getCurrentPlayer();
         String event = gameState.getLastEvent();
 
-        // 🔴 اطلاع ورشکستگی
         for (Player p : gameState.getPlayers()) {
             if (p.getStatus() == PlayerStatus.BANKRUPT) {
                 server.broadcast("{\"type\":\"SHOW_CARD\",\"text\":\"" +
@@ -329,17 +300,13 @@ public class GameController {
                         escapeJson(p.getName() + " is bankrupt and out of the game.") + "\"}");
             }
         }
-
-        // حرکت بازیکن
         if (event.contains("GO") || event.contains("Jail") || event.contains("spaces")) {
             server.broadcast("{\"type\":\"ROLL_UPDATE\",\"playerId\":" + currentP.getPlayerId() + ",\"currentPosition\":" + currentP.getCurrentPosition() + "}");
         }
 
-        // بروزرسانی وضعیت همه بازیکنان
         for (Player p : gameState.getPlayers()) {
             server.broadcast("{\"type\":\"PLAYER_STATS\",\"playerId\":" + p.getPlayerId() + ",\"balance\":" + p.getBalance() + "}");
 
-            // ارسال وضعیت زندان
             String status = p.getStatus().toString();
             int jailTurns = p.getJailTurns();
             server.sendToPlayer(p.getPlayerId(),
@@ -350,7 +317,6 @@ public class GameController {
             sendPlayerProperties(p);
         }
 
-        // نمایش کارت/رویداد
         if (event.contains("ACTION_") || event.contains("CARD_DRAWN") ||
                 event.contains("AUCTION_") || event.contains("JAIL")) {
             String cleanMsg = event.contains(":") ? event.split(":", 2)[1] : event;
@@ -358,7 +324,6 @@ public class GameController {
             server.broadcast("{\"type\":\"SHOW_CARD\",\"text\":\"" + cleanMsg + "\"}");
         }
 
-        // ثبت در لاگ
         if (!event.isEmpty() && !event.equals("Game Started")) {
             String safeEvent = escapeJson(event);
             server.broadcast("{\"type\":\"EVENT_LOG\",\"message\":\"" + safeEvent + "\"}");
@@ -431,7 +396,6 @@ public class GameController {
         return "{\"type\":\"ERROR\",\"message\":\"Invalid trade command!\"}";
     }
 
-    // متد کمکی برای escape کردن JSON
     private String escapeJson(String text) {
         if (text == null) return "";
         return text.replace("\\", "\\\\")

@@ -4,12 +4,10 @@ import ir.monopoly.server.player.Player;
 import ir.monopoly.server.player.PlayerStatus;
 import ir.monopoly.server.property.Property;
 
-import java.util.ArrayList;
-import java.util.List;
-
 public class AuctionManager {
     private final Property property;
-    private final List<Player> activeBidders;
+    private final Player[] activeBidders;
+    private int bidderCount;
     private int currentHighestBid = 0;
     private Player currentWinner = null;
     private int currentBidderIndex = 0;
@@ -19,10 +17,13 @@ public class AuctionManager {
 
     public AuctionManager(Property property, Player[] players, GameState gameState) {
         this.property = property;
-        this.activeBidders = new ArrayList<>();
+        this.activeBidders = new Player[4];
+        this.bidderCount = 0;
+
         for (Player p : players) {
             if (p.getStatus() != PlayerStatus.BANKRUPT) {
-                activeBidders.add(p);
+                activeBidders[bidderCount] = p;
+                bidderCount++;
             }
         }
         this.currentHighestBid = 10;
@@ -31,11 +32,11 @@ public class AuctionManager {
     }
 
     public boolean isAuctionActive() {
-        return auctionActive && activeBidders.size() > 1;
+        return auctionActive && bidderCount > 1;
     }
 
     public boolean placeBid(Player player, int amount) {
-        if (!auctionActive || !activeBidders.contains(player)) return false;
+        if (!auctionActive || !containsPlayer(player)) return false;
         if (amount <= currentHighestBid) return false;
         if (player.getBalance() < amount) {
             BankruptcyManager.processBankruptcy(player, null, gameState);
@@ -46,27 +47,30 @@ public class AuctionManager {
         currentWinner = player;
         roundFinished = false;
 
-        currentBidderIndex = (activeBidders.indexOf(player) + 1) % activeBidders.size();
-        if (currentBidderIndex == 0) roundFinished = true;
+        int playerIndex = getPlayerIndex(player);
+        if (playerIndex != -1) {
+            currentBidderIndex = (playerIndex + 1) % bidderCount;
+            if (currentBidderIndex == 0) roundFinished = true;
+        }
 
         return true;
     }
 
     public boolean passBid(Player player) {
-        if (!auctionActive || !activeBidders.contains(player)) return false;
+        if (!auctionActive || !containsPlayer(player)) return false;
 
-        activeBidders.remove(player);
-        if (activeBidders.isEmpty()) {
+        removePlayer(player);
+        if (bidderCount == 0) {
             endAuction();
             return true;
         }
 
-        if (currentBidderIndex >= activeBidders.size()) {
+        if (currentBidderIndex >= bidderCount) {
             currentBidderIndex = 0;
             roundFinished = true;
         }
 
-        if (activeBidders.size() == 1) {
+        if (bidderCount == 1) {
             endAuction();
             return true;
         }
@@ -87,8 +91,8 @@ public class AuctionManager {
         auctionActive = false;
         if (currentWinner != null) {
             endAuction();
-        } else if (!activeBidders.isEmpty()) {
-            Player winner = activeBidders.get(0);
+        } else if (bidderCount > 0) {
+            Player winner = activeBidders[0];
             if (winner.getBalance() >= 10) {
                 winner.changeBalance(-10);
                 property.setOwner(winner.getPlayerId());
@@ -98,7 +102,7 @@ public class AuctionManager {
     }
 
     public boolean isFinished() {
-        return !auctionActive || activeBidders.size() <= 1;
+        return !auctionActive || bidderCount <= 1;
     }
 
     public Property getProperty() {
@@ -114,12 +118,16 @@ public class AuctionManager {
     }
 
     public Player getCurrentBidder() {
-        if (activeBidders.isEmpty() || !auctionActive) return null;
-        return activeBidders.get(currentBidderIndex);
+        if (bidderCount == 0 || !auctionActive) return null;
+        return activeBidders[currentBidderIndex];
     }
 
-    public List<Player> getActiveBidders() {
-        return new ArrayList<>(activeBidders);
+    public Player[] getActiveBidders() {
+        Player[] result = new Player[bidderCount];
+        for (int i = 0; i < bidderCount; i++) {
+            result[i] = activeBidders[i];
+        }
+        return result;
     }
 
     public String getAuctionStatus() {
@@ -128,5 +136,37 @@ public class AuctionManager {
                 " | Current bid: $" + currentHighestBid +
                 " | Leader: " + (currentWinner != null ? currentWinner.getName() : "None") +
                 " | Current turn: " + (getCurrentBidder() != null ? getCurrentBidder().getName() : "None");
+    }
+
+    private boolean containsPlayer(Player player) {
+        for (int i = 0; i < bidderCount; i++) {
+            if (activeBidders[i] == player) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private int getPlayerIndex(Player player) {
+        for (int i = 0; i < bidderCount; i++) {
+            if (activeBidders[i] == player) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private void removePlayer(Player player) {
+        int index = getPlayerIndex(player);
+        if (index != -1) {
+            for (int i = index; i < bidderCount - 1; i++) {
+                activeBidders[i] = activeBidders[i + 1];
+            }
+            bidderCount--;
+
+            if (currentBidderIndex > index) {
+                currentBidderIndex--;
+            }
+        }
     }
 }
