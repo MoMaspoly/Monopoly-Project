@@ -33,11 +33,12 @@ public class UndoManager {
 
     /**
      * Reverts the last recorded action.
+     * @return true if action was undone, false if no action to undo
      */
-    public void undo() {
+    public boolean undo() {
         if (undoStack.isEmpty()) {
             gameState.addEvent("UNDO: No action to undo.");
-            return;
+            return false;
         }
 
         GameAction action = undoStack.pop();
@@ -52,7 +53,7 @@ public class UndoManager {
                     pMoney.changeBalance(-diff);
                 }
                 gameState.addEvent("UNDO: Money change reverted.");
-                break;
+                return true;
 
             case PROPERTY_PURCHASE:
                 // Revert purchase: give money back and remove ownership
@@ -64,7 +65,7 @@ public class UndoManager {
                     purchasedProp.clearOwner(); // Critical: Update property object status
                     gameState.addEvent("UNDO: Property purchase reverted for " + purchasedProp.getName());
                 }
-                break;
+                return true;
 
             case CONSTRUCTION:
                 // Revert house/hotel build: refund cost and remove building
@@ -79,16 +80,17 @@ public class UndoManager {
                     }
                     gameState.addEvent("UNDO: Construction on " + builtProp.getName() + " reverted.");
                 }
-                break;
+                return true;
 
             case MOVEMENT:
                 // Revert player position
                 Player pMove = gameState.getPlayerById(action.getPlayerId());
                 if (pMove != null) {
-                    pMove.setCurrentPosition((Integer) action.getOldValue());
-                    gameState.addEvent("UNDO: Movement reverted.");
+                    int oldPos = (Integer) action.getOldValue();
+                    pMove.setCurrentPosition(oldPos);
+                    gameState.addEvent("UNDO: Movement reverted to position " + oldPos);
                 }
-                break;
+                return true;
 
             case TRADE:
                 // Revert a completed trade between two players
@@ -104,27 +106,31 @@ public class UndoManager {
                     for (Property p : action.getOfferedProperties()) {
                         receiver.removeProperty(p.getPropertyId());
                         sender.addProperty(p);
+                        p.setOwner(sender.getPlayerId());
                     }
                     for (Property p : action.getRequestedProperties()) {
                         sender.removeProperty(p.getPropertyId());
                         receiver.addProperty(p);
+                        p.setOwner(receiver.getPlayerId());
                     }
                     gameState.addEvent("UNDO: Trade reverted.");
                 }
-                break;
+                return true;
 
             default:
                 gameState.addEvent("UNDO: Action type not supported.");
+                return false;
         }
     }
 
     /**
      * Re-applies the last undone action.
+     * @return true if action was redone, false if no action to redo
      */
-    public void redo() {
+    public boolean redo() {
         if (redoStack.isEmpty()) {
             gameState.addEvent("REDO: No action to redo.");
-            return;
+            return false;
         }
 
         GameAction action = redoStack.pop();
@@ -138,15 +144,16 @@ public class UndoManager {
                     pMoney.changeBalance(diff);
                 }
                 gameState.addEvent("REDO: Money change re-applied.");
-                break;
+                return true;
 
             case MOVEMENT:
                 Player pMove = gameState.getPlayerById(action.getPlayerId());
                 if (pMove != null) {
-                    pMove.setCurrentPosition((Integer) action.getNewValue());
+                    int newPos = (Integer) action.getNewValue();
+                    pMove.setCurrentPosition(newPos);
+                    gameState.addEvent("REDO: Movement re-applied to position " + newPos);
                 }
-                gameState.addEvent("REDO: Movement re-applied.");
-                break;
+                return true;
 
             case PROPERTY_PURCHASE:
                 Player pPurchase = gameState.getPlayerById(action.getPlayerId());
@@ -154,9 +161,10 @@ public class UndoManager {
                 if (pPurchase != null && prop != null) {
                     pPurchase.changeBalance(-prop.getPurchasePrice());
                     pPurchase.addProperty(prop);
+                    prop.setOwner(pPurchase.getPlayerId());
+                    gameState.addEvent("REDO: Property purchase re-applied.");
                 }
-                gameState.addEvent("REDO: Property purchase re-applied.");
-                break;
+                return true;
 
             case CONSTRUCTION:
                 Player pBuild = gameState.getPlayerById(action.getPlayerId());
@@ -168,12 +176,13 @@ public class UndoManager {
                     } else {
                         builtProp.addHouse();
                     }
+                    gameState.addEvent("REDO: Construction re-applied.");
                 }
-                gameState.addEvent("REDO: Construction re-applied.");
-                break;
+                return true;
 
             default:
                 gameState.addEvent("REDO: Action re-applied.");
+                return true;
         }
     }
 }

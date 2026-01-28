@@ -35,7 +35,7 @@ public class MonopolyGUI extends Application {
     private TextArea logArea;
     private Label balanceLabel, playerInfoLabel, statusLabel;
     private ListView<String> propertyList;
-    private Button btnRoll, btnBuy, btnTrade, btnEndTurn;
+    private Button btnRoll, btnBuy, btnTrade, btnEndTurn, btnUndo, btnRedo;
 
     private final Map<Integer, double[]> tileCoords = new HashMap<>();
     private final Map<Integer, Circle> playerTokens = new HashMap<>();
@@ -142,14 +142,26 @@ public class MonopolyGUI extends Application {
         btnRoll = createBtn("🎲 ROLL", "#D4AF37");
         btnBuy = createBtn("🏠 BUY", "#27ae60");
         btnTrade = createBtn("🤝 TRADE", "#2980b9");
+        btnUndo = createBtn("↶ UNDO", "#8e44ad");
+        btnRedo = createBtn("↷ REDO", "#3498db");
         btnEndTurn = createBtn("⏭ END", "#c0392b");
 
-        btnRoll.setOnAction(e -> { client.sendMessage("ROLL"); hasRolledThisTurn = true; btnRoll.setDisable(true); });
+        btnRoll.setOnAction(e -> {
+            client.sendMessage("ROLL");
+            hasRolledThisTurn = true;
+            btnRoll.setDisable(true);
+        });
         btnBuy.setOnAction(e -> client.sendMessage("BUY"));
         btnTrade.setOnAction(e -> { /* Trade Dialog Logic */ });
+        btnUndo.setOnAction(e -> client.sendMessage("UNDO"));
+        btnRedo.setOnAction(e -> client.sendMessage("REDO"));
         btnEndTurn.setOnAction(e -> client.sendMessage("END_TURN"));
 
-        box.getChildren().addAll(btnRoll, btnBuy, btnTrade, btnEndTurn);
+        // Initially disable Undo/Redo until it's our turn
+        btnUndo.setDisable(true);
+        btnRedo.setDisable(true);
+
+        box.getChildren().addAll(btnRoll, btnBuy, btnTrade, btnUndo, btnRedo, btnEndTurn);
         return box;
     }
 
@@ -157,12 +169,12 @@ public class MonopolyGUI extends Application {
         Platform.runLater(() -> {
             String type = getJsonVal(json, "type");
             String msg = getJsonVal(json, "message");
-            if (!msg.isEmpty()) logArea.appendText("➤ " + msg + "\n");
 
             switch (type) {
                 case "CONNECTED" -> {
                     myPlayerId = Integer.parseInt(getJsonVal(json, "playerId"));
                     playerInfoLabel.setText("👤 Player " + myPlayerId);
+                    logArea.appendText("➤ Connected as Player " + myPlayerId + "\n");
                 }
                 case "TURN_UPDATE" -> {
                     int curr = Integer.parseInt(getJsonVal(json, "currentPlayer"));
@@ -171,23 +183,49 @@ public class MonopolyGUI extends Application {
                     // RE-ENABLE ROLL BUTTON FOR NEW TURN
                     if (isMe) hasRolledThisTurn = false;
 
+                    // Enable/disable buttons based on turn
                     btnRoll.setDisable(!isMe || hasRolledThisTurn);
                     btnBuy.setDisable(!isMe);
+                    btnUndo.setDisable(!isMe);  // Only active player can undo
+                    btnRedo.setDisable(!isMe);  // Only active player can redo
                     btnEndTurn.setDisable(!isMe);
                     statusLabel.setText(isMe ? "⭐ YOUR TURN" : "Wait for P" + curr);
+
+                    logArea.appendText("➤ Turn: Player " + curr + "\n");
                 }
                 case "ROLL_UPDATE" -> {
                     int pId = Integer.parseInt(getJsonVal(json, "playerId"));
                     int pos = Integer.parseInt(getJsonVal(json, "currentPosition"));
                     moveToken(pId, pos);
+                    logArea.appendText("➤ Player " + pId + " moved to position " + pos + "\n");
                 }
                 case "PLAYER_STATS" -> {
-                    if (Integer.parseInt(getJsonVal(json, "playerId")) == myPlayerId)
-                        balanceLabel.setText("💰 Balance: $" + getJsonVal(json, "balance"));
+                    int playerId = Integer.parseInt(getJsonVal(json, "playerId"));
+                    int balance = Integer.parseInt(getJsonVal(json, "balance"));
+                    if (playerId == myPlayerId) {
+                        balanceLabel.setText("💰 Balance: $" + balance);
+                    }
                 }
                 case "SHOW_CARD" -> {
-                    Alert a = new Alert(Alert.AlertType.INFORMATION, getJsonVal(json, "text"));
+                    String text = getJsonVal(json, "text");
+                    logArea.appendText("➤ Card: " + text + "\n");
+                    Alert a = new Alert(Alert.AlertType.INFORMATION, text);
+                    a.setHeaderText("Card Draw");
                     a.show();
+                }
+                case "EVENT_LOG" -> {
+                    logArea.appendText("➤ " + msg + "\n");
+                }
+                case "ERROR" -> {
+                    logArea.appendText("❌ Error: " + msg + "\n");
+                    Alert a = new Alert(Alert.AlertType.ERROR, msg);
+                    a.setHeaderText("Error");
+                    a.show();
+                }
+                default -> {
+                    if (!msg.isEmpty()) {
+                        logArea.appendText("➤ " + msg + "\n");
+                    }
                 }
             }
         });
@@ -269,16 +307,36 @@ public class MonopolyGUI extends Application {
         new Thread(() -> {
             client = new NetworkClient();
             client.setOnMessageReceived(this::processMessage);
-            try { client.connect("localhost", 8080); } catch (Exception e) {}
+            try {
+                client.connect("localhost", 8080);
+                logArea.appendText("➤ Connecting to server...\n");
+            } catch (Exception e) {
+                logArea.appendText("❌ Failed to connect: " + e.getMessage() + "\n");
+            }
         }).start();
     }
 
     private String getJsonVal(String j, String k) {
         try {
-            String p = "\"" + k + "\":"; int s = j.indexOf(p) + p.length();
-            if (j.charAt(s) == '\"') return j.substring(s + 1, j.indexOf("\"", s + 1));
-            int e = j.indexOf(",", s); if (e == -1) e = j.indexOf("}", s);
-            return j.substring(s, e).trim();
-        } catch (Exception e) { return ""; }
+            String p = "\"" + k + "\":";
+            int s = j.indexOf(p);
+            if (s == -1) return "";
+            s += p.length();
+
+            if (s >= j.length()) return "";
+
+            if (j.charAt(s) == '\"') {
+                int end = j.indexOf("\"", s + 1);
+                if (end == -1) return "";
+                return j.substring(s + 1, end);
+            } else {
+                int end = j.indexOf(",", s);
+                if (end == -1) end = j.indexOf("}", s);
+                if (end == -1) return "";
+                return j.substring(s, end).trim();
+            }
+        } catch (Exception e) {
+            return "";
+        }
     }
 }

@@ -31,16 +31,55 @@ public class GameController {
             case "ACCEPT_TRADE": return handleAcceptTrade(pId);
             case "END_TURN": return handleEndTurn(player);
             case "GET_TOP_K": return "{\"type\":\"SHOW_CARD\",\"text\":\"" + LeaderboardManager.getTopKReport(gameState) + "\"}";
-            case "UNDO": gameState.getUndoManager().undo(); syncGameState(); return null;
-            case "REDO": gameState.getUndoManager().redo(); syncGameState(); return null;
+            case "UNDO":
+                boolean undone = gameState.getUndoManager().undo();
+                if (undone) {
+                    syncGameStateAfterUndoRedo();
+                }
+                return null;
+            case "REDO":
+                boolean redone = gameState.getUndoManager().redo();
+                if (redone) {
+                    syncGameStateAfterUndoRedo();
+                }
+                return null;
             default: return "{\"type\":\"ERROR\",\"message\":\"Unknown command\"}";
         }
+    }
+
+    /**
+     * Special sync for undo/redo operations
+     */
+    private void syncGameStateAfterUndoRedo() {
+        String lastEvent = gameState.getLastEvent();
+
+        // Update ALL players' stats (money might have changed)
+        for (Player p : gameState.getPlayers()) {
+            server.broadcast("{\"type\":\"PLAYER_STATS\",\"playerId\":" + p.getPlayerId() + ",\"balance\":" + p.getBalance() + "}");
+        }
+
+        // Update ALL players' positions (in case of movement undo/redo)
+        for (Player p : gameState.getPlayers()) {
+            server.broadcast("{\"type\":\"ROLL_UPDATE\",\"playerId\":" + p.getPlayerId() + ",\"currentPosition\":" + p.getCurrentPosition() + "}");
+        }
+
+        // Send event message
+        if (lastEvent.contains("UNDO:") || lastEvent.contains("REDO:")) {
+            String cleanMsg = lastEvent.contains(":") ? lastEvent.split(":", 2)[1] : lastEvent;
+            server.broadcast("{\"type\":\"SHOW_CARD\",\"text\":\"" + cleanMsg + "\"}");
+        }
+
+        // Send to log
+        server.broadcast("{\"type\":\"EVENT_LOG\",\"message\":\"" + lastEvent + "\"}");
     }
 
     private String handleRoll(Player player) {
         Dice dice = new Dice();
         dice.roll();
         int total = dice.getSum();
+
+        // ثبت action برای حرکت (قبل از تغییر)
+        int oldPosition = player.getCurrentPosition();
 
         // منطق زندان
         if (player.getStatus() == PlayerStatus.IN_JAIL) {
@@ -50,7 +89,17 @@ public class GameController {
             } else {
                 player.incrementJailTurns();
                 if (player.getJailTurns() >= 3) {
+                    // ثبت action برای پرداخت جریمه
+                    int oldBalance = player.getBalance();
                     player.changeBalance(-50);
+                    gameState.getUndoManager().recordAction(new GameAction(
+                            GameAction.ActionType.MONEY_CHANGE,
+                            player.getPlayerId(),
+                            oldBalance,
+                            player.getBalance(),
+                            -1
+                    ));
+
                     player.releaseFromJail();
                     server.broadcast("{\"type\":\"SHOW_CARD\",\"text\":\"3rd turn! " + player.getName() + " paid $50 fine and is free.\"}");
                 } else {
@@ -61,9 +110,17 @@ public class GameController {
         }
 
         // حرکت مهره بر اساس تاس
-        int oldPos = player.getCurrentPosition();
-        int newPos = (oldPos + total) % 40;
+        int newPos = (oldPosition + total) % 40;
         player.setCurrentPosition(newPos);
+
+        // ثبت action برای حرکت
+        gameState.getUndoManager().recordAction(new GameAction(
+                GameAction.ActionType.MOVEMENT,
+                player.getPlayerId(),
+                oldPosition,
+                newPos,
+                -1
+        ));
 
         server.broadcast("{\"type\":\"ROLL_UPDATE\",\"playerId\":" + player.getPlayerId() + ",\"currentPosition\":" + newPos + "}");
 
@@ -95,13 +152,31 @@ public class GameController {
             String cleanMsg = event.contains(":") ? event.split(":", 2)[1] : event;
             server.broadcast("{\"type\":\"SHOW_CARD\",\"text\":\"" + cleanMsg + "\"}");
         }
+
+        // ارسال لاگ رویداد
+        if (!event.isEmpty() && !event.equals("Game Started")) {
+            server.broadcast("{\"type\":\"EVENT_LOG\",\"message\":\"" + event + "\"}");
+        }
     }
 
     private String handleBuy(Player p) {
         Tile tile = gameState.getBoard().getTileAt(p.getCurrentPosition());
         if (tile.getTileType() == TileType.PROPERTY) {
             Property prop = (Property) tile.getTileData();
+
+            // ثبت action برای خرید (قبل از انجام)
+            int oldBalance = p.getBalance();
+
             if (PropertyService.buyProperty(p, prop, gameState)) {
+                // ثبت action خرید
+                gameState.getUndoManager().recordAction(new GameAction(
+                        GameAction.ActionType.PROPERTY_PURCHASE,
+                        p.getPlayerId(),
+                        oldBalance,
+                        p.getBalance(),
+                        prop.getPropertyId()
+                ));
+
                 syncGameState();
                 return null;
             }
