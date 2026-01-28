@@ -2,28 +2,28 @@ package ir.monopoly.server.game;
 
 import ir.monopoly.server.datastructure.MyHeap;
 import ir.monopoly.server.player.Player;
-import ir.monopoly.server.player.PlayerStatus;
 
 public class LeaderboardManager {
 
-    public static void printTopPlayers(GameState gameState) {
+    /**
+     * Uses a Max-Heap to extract the top players by total wealth.
+     * @return A formatted string for GUI display.
+     */
+    public static String getTopKReport(GameState gameState) {
         MyHeap<Player> maxHeap = new MyHeap<>(true);
 
         for (Player p : gameState.getPlayers()) {
-            if (p.getStatus() != PlayerStatus.BANKRUPT) {
-                maxHeap.insert(p);
-            }
+            maxHeap.insert(p);
         }
 
-        System.out.println("--- LEADERBOARD (Top Wealthy Players - Using MyHeap) ---");
+        StringBuilder sb = new StringBuilder("🏆 MONOPOLY LEADERBOARD 🏆\n\n");
         int count = 1;
-        while (count <= 3 && !maxHeap.isEmpty()) {
-            Player top = maxHeap.extract();
-            if (top == null) break;
-            System.out.println(count + ". " + top.getName() + " | Wealth: $" + top.getBalance());
+        while (!maxHeap.isEmpty() && count <= 3) {
+            Player p = maxHeap.extract();
+            sb.append(count).append(". ").append(p.getName())
+                    .append(" - Wealth: $").append(p.getTotalWealth()).append("\n");
             count++;
         }
-
-        System.out.println("\n" + gameState.getWealthReport());
+        return sb.toString();
     }
 }

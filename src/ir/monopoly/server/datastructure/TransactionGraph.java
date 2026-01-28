@@ -1,97 +1,37 @@
 package ir.monopoly.server.datastructure;
 
+/**
+ * Tracks money flow between players using an Adjacency Matrix.
+ * Essential for generating reports on who is paying whom.
+ */
 public class TransactionGraph {
-    private final MyHashTable<Integer, MyHashTable<Integer, Integer>> adjList;
-
-    public TransactionGraph() {
-        this.adjList = new MyHashTable<>();
-    }
+    private final int[][] matrix;
+    private final int numPlayers;
 
     public TransactionGraph(int numPlayers) {
-        this.adjList = new MyHashTable<>();
+        this.numPlayers = numPlayers;
+        // matrix[i][j] stores total money paid by player i to player j
+        this.matrix = new int[numPlayers + 1][numPlayers + 1];
     }
 
-    public void recordTransaction(int from, int to, int amount) {
-        if (from == to || amount <= 0) return;
-
-        MyHashTable<Integer, Integer> neighbors = adjList.get(from);
-        if (neighbors == null) {
-            neighbors = new MyHashTable<>();
-            adjList.put(from, neighbors);
+    /**
+     * Records a rent or trade payment.
+     */
+    public void recordTransaction(int fromId, int toId, int amount) {
+        if (fromId > 0 && toId > 0 && fromId <= numPlayers && toId <= numPlayers) {
+            matrix[fromId][toId] += amount;
         }
-
-        Integer current = neighbors.get(to);
-        neighbors.put(to, (current == null ? 0 : current) + amount);
     }
 
-    @SuppressWarnings("unchecked")
-    public void printFinancialSummary(String[] playerNames) {
-        System.out.println("--- Financial Transaction Summary (Directed Graph) ---");
-
-        Object[] playerEntriesRaw = adjList.getAllEntries();
-
-        for (Object rawEntry : playerEntriesRaw) {
-            MyHashTable.Entry<Integer, MyHashTable<Integer, Integer>> playerEntry =
-                    (MyHashTable.Entry<Integer, MyHashTable<Integer, Integer>>) rawEntry;
-
-            int fromPlayer = playerEntry.key;
-            MyHashTable<Integer, Integer> neighbors = playerEntry.value;
-
-            if (neighbors != null && neighbors.size() > 0) {
-                System.out.print(playerNames[fromPlayer] + " paid to → ");
-
-                Object[] transactionEntriesRaw = neighbors.getAllEntries();
-
-                for (int j = 0; j < transactionEntriesRaw.length; j++) {
-                    MyHashTable.Entry<Integer, Integer> transEntry =
-                            (MyHashTable.Entry<Integer, Integer>) transactionEntriesRaw[j];
-
-                    int toPlayer = transEntry.key;
-                    int amount = transEntry.value;
-
-                    System.out.print(playerNames[toPlayer] + ": $" + amount);
-                    if (j < transactionEntriesRaw.length - 1) {
-                        System.out.print(" | ");
-                    }
-                }
-                System.out.println();
-            }
-        }
-        System.out.println("---------------------------------------------------");
+    public int getTotalPaidBy(int playerId) {
+        int sum = 0;
+        for (int j = 1; j <= numPlayers; j++) sum += matrix[playerId][j];
+        return sum;
     }
 
-    @SuppressWarnings("unchecked")
-    public String getTopInteraction(String[] playerNames) {
-        int maxAmount = 0;
-        String topPair = "No transactions recorded";
-
-        Object[] playerEntriesRaw = adjList.getAllEntries();
-
-        for (Object rawEntry : playerEntriesRaw) {
-            MyHashTable.Entry<Integer, MyHashTable<Integer, Integer>> playerEntry =
-                    (MyHashTable.Entry<Integer, MyHashTable<Integer, Integer>>) rawEntry;
-
-            int from = playerEntry.key;
-            MyHashTable<Integer, Integer> neighbors = playerEntry.value;
-
-            if (neighbors == null || neighbors.size() == 0) continue;
-
-            Object[] edgesRaw = neighbors.getAllEntries();
-
-            for (Object rawEdge : edgesRaw) {
-                MyHashTable.Entry<Integer, Integer> edge =
-                        (MyHashTable.Entry<Integer, Integer>) rawEdge;
-
-                int to = edge.key;
-                int amount = edge.value;
-
-                if (amount > maxAmount) {
-                    maxAmount = amount;
-                    topPair = playerNames[from] + " and " + playerNames[to] + " ($" + amount + ")";
-                }
-            }
-        }
-
-        return "Highest Financial Interaction: " + topPair;
+    public int getTotalReceivedBy(int playerId) {
+        int sum = 0;
+        for (int i = 1; i <= numPlayers; i++) sum += matrix[i][playerId];
+        return sum;
     }
 }

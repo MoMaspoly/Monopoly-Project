@@ -1,52 +1,69 @@
 package ir.monopoly.server.board;
 
-public class Board {
+import java.util.HashMap;
+import java.util.Map;
 
-    private Tile head;
-    private int size;
+/**
+ * Represents the Monopoly board as a Circular Linked List.
+ * This structure allows for infinite movement loops and easy tile retrieval.
+ */
+public class Board {
+    private Tile head; // Tile 0 (GO)
+    private Tile tail; // The last added tile
+    private int size = 0;
+    private final Map<Integer, Tile> tileMap; // Fast lookup for IDs
 
     public Board() {
-        this.head = null;
-        this.size = 0;
+        this.tileMap = new HashMap<>();
     }
 
+    /**
+     * Adds a new tile to the board and maintains the circular connection.
+     * @param tile The tile to be added.
+     */
     public void addTile(Tile tile) {
+        tileMap.put(tile.getTileId(), tile);
+
         if (head == null) {
             head = tile;
-            tile.setNext(tile);
+            tail = tile;
+            tile.setNext(head); // Points to itself to start the circle
         } else {
-            Tile current = head;
-            while (current.getNext() != head) {
-                current = current.getNext();
-            }
-            current.setNext(tile);
-            tile.setNext(head);
+            tail.setNext(tile);
+            tail = tile;
+            tail.setNext(head); // Closes the circle by pointing back to GO
         }
         size++;
     }
 
-    public Tile move(Tile start, int steps) {
-        Tile current = start;
-        for (int i = 0; i < steps; i++) {
-            current = current.getNext();
-        }
-        return current;
+    /**
+     * Retrieves a tile by its index (0-39).
+     * Used by GameState to find properties or resolve landings.
+     */
+    public Tile getTileAt(int id) {
+        return tileMap.get(id);
     }
 
-    public Tile getTileAt(int position) {
-
-        Tile current = head;
-        for (int i = 0; i < position; i++) {
-            current = current.getNext();
-        }
-        return current;
-    }
-
+    /**
+     * Standard getter for the starting tile.
+     */
     public Tile getHead() {
         return head;
     }
 
     public int getSize() {
         return size;
+    }
+
+    /**
+     * Utility to find a tile by name (useful for debugging or specific card effects).
+     */
+    public Tile findTileByName(String name) {
+        for (Tile t : tileMap.values()) {
+            if (t.getName().equalsIgnoreCase(name)) {
+                return t;
+            }
+        }
+        return null;
     }
 }

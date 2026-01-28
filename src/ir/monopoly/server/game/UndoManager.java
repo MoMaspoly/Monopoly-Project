@@ -4,6 +4,10 @@ import ir.monopoly.server.datastructure.MyStack;
 import ir.monopoly.server.player.Player;
 import ir.monopoly.server.property.Property;
 
+/**
+ * Manages Undo and Redo operations for the game.
+ * Records actions such as money changes, property purchases, construction, and movement.
+ */
 public class UndoManager {
     private final MyStack<GameAction> undoStack;
     private final MyStack<GameAction> redoStack;
@@ -15,13 +19,21 @@ public class UndoManager {
         this.redoStack = new MyStack<>();
     }
 
+    /**
+     * Records a new action and clears the redo stack.
+     * @param action The action performed by a player.
+     */
     public void recordAction(GameAction action) {
         undoStack.push(action);
+        // Once a new action is taken, redo history is invalidated
         while (!redoStack.isEmpty()) {
             redoStack.pop();
         }
     }
 
+    /**
+     * Reverts the last recorded action.
+     */
     public void undo() {
         if (undoStack.isEmpty()) {
             gameState.addEvent("UNDO: No action to undo.");
@@ -33,104 +45,82 @@ public class UndoManager {
 
         switch (action.getType()) {
             case MONEY_CHANGE:
+                // Revert balance: diff = NewValue - OldValue. Subtract diff from current.
                 int diff = (Integer) action.getNewValue() - (Integer) action.getOldValue();
-                Player playerMoney = gameState.getPlayerById(action.getPlayerId());
-                if (playerMoney != null) {
-                    playerMoney.changeBalance(-diff);
-                    gameState.updatePlayerRankings(playerMoney);
+                Player pMoney = gameState.getPlayerById(action.getPlayerId());
+                if (pMoney != null) {
+                    pMoney.changeBalance(-diff);
                 }
-                gameState.addEvent("UNDO: Money change reverted by $" + diff);
+                gameState.addEvent("UNDO: Money change reverted.");
                 break;
 
             case PROPERTY_PURCHASE:
-                Player playerPurchase = gameState.getPlayerById(action.getPlayerId());
+                // Revert purchase: give money back and remove ownership
+                Player pPurchase = gameState.getPlayerById(action.getPlayerId());
                 Property purchasedProp = gameState.getPropertyById(action.getTargetId());
-                if (playerPurchase != null && purchasedProp != null) {
-                    playerPurchase.changeBalance(purchasedProp.getPurchasePrice());
-                    playerPurchase.removeProperty(purchasedProp.getPropertyId());
-                    purchasedProp.clearOwner();
-                    gameState.updatePlayerRankings(playerPurchase);
+                if (pPurchase != null && purchasedProp != null) {
+                    pPurchase.changeBalance(purchasedProp.getPurchasePrice());
+                    pPurchase.removeProperty(purchasedProp.getPropertyId());
+                    purchasedProp.clearOwner(); // Critical: Update property object status
                     gameState.addEvent("UNDO: Property purchase reverted for " + purchasedProp.getName());
                 }
                 break;
 
             case CONSTRUCTION:
-                Player playerBuild = gameState.getPlayerById(action.getPlayerId());
+                // Revert house/hotel build: refund cost and remove building
+                Player pBuild = gameState.getPlayerById(action.getPlayerId());
                 Property builtProp = gameState.getPropertyById(action.getTargetId());
-                if (playerBuild != null && builtProp != null) {
-                    playerBuild.changeBalance((Integer) action.getOldValue());
+                if (pBuild != null && builtProp != null) {
+                    pBuild.changeBalance(builtProp.getHouseCost());
                     if (builtProp.hasHotel()) {
                         builtProp.removeHotel();
                     } else {
-                        builtProp.removeHouses((Integer) action.getNewValue());
+                        builtProp.removeHouses(1);
                     }
-                    gameState.updatePlayerRankings(playerBuild);
-                    gameState.addEvent("UNDO: Construction reverted on " + builtProp.getName());
-                }
-                break;
-
-            case MORTGAGE:
-                Player playerMortgage = gameState.getPlayerById(action.getPlayerId());
-                Property mortgagedProp = gameState.getPropertyById(action.getTargetId());
-                if (playerMortgage != null && mortgagedProp != null) {
-                    boolean wasMortgaged = (Boolean) action.getOldValue();
-                    if (wasMortgaged) {
-                        playerMortgage.changeBalance(-mortgagedProp.getUnmortgagePrice());
-                    } else {
-                        playerMortgage.changeBalance(mortgagedProp.getMortgageValue());
-                    }
-                    mortgagedProp.setMortgaged(!wasMortgaged);
-                    gameState.updatePlayerRankings(playerMortgage);
-                    gameState.addEvent("UNDO: Mortgage status reverted for property " + mortgagedProp.getName());
+                    gameState.addEvent("UNDO: Construction on " + builtProp.getName() + " reverted.");
                 }
                 break;
 
             case MOVEMENT:
-                Player playerMove = gameState.getPlayerById(action.getPlayerId());
-                if (playerMove != null) {
-                    playerMove.setCurrentPosition((Integer) action.getOldValue());
-                    gameState.addEvent("UNDO: Movement reverted to position " + action.getOldValue());
+                // Revert player position
+                Player pMove = gameState.getPlayerById(action.getPlayerId());
+                if (pMove != null) {
+                    pMove.setCurrentPosition((Integer) action.getOldValue());
+                    gameState.addEvent("UNDO: Movement reverted.");
                 }
                 break;
 
             case TRADE:
+                // Revert a completed trade between two players
                 Player sender = gameState.getPlayerById(action.getPlayerId());
                 Player receiver = gameState.getPlayerById(action.getOtherPlayerId());
 
-                if (sender == null || receiver == null) {
-                    gameState.addEvent("UNDO TRADE: One of the players not found.");
-                    break;
-                }
+                if (sender != null && receiver != null) {
+                    // Revert cash exchange
+                    sender.changeBalance(action.getRequestedCash() - action.getOfferedCash());
+                    receiver.changeBalance(action.getOfferedCash() - action.getRequestedCash());
 
-                sender.changeBalance(action.getRequestedCash());
-                receiver.changeBalance(action.getOfferedCash());
-
-                for (Property p : action.getOfferedProperties()) {
-                    if (p != null) {
+                    // Swap properties back to original owners
+                    for (Property p : action.getOfferedProperties()) {
                         receiver.removeProperty(p.getPropertyId());
                         sender.addProperty(p);
-                        p.setOwner(sender.getPlayerId());
                     }
-                }
-
-                for (Property p : action.getRequestedProperties()) {
-                    if (p != null) {
+                    for (Property p : action.getRequestedProperties()) {
                         sender.removeProperty(p.getPropertyId());
                         receiver.addProperty(p);
-                        p.setOwner(receiver.getPlayerId());
                     }
+                    gameState.addEvent("UNDO: Trade reverted.");
                 }
-
-                gameState.updatePlayerRankings(sender);
-                gameState.updatePlayerRankings(receiver);
-                gameState.addEvent("UNDO: Trade between " + sender.getName() + " and " + receiver.getName() + " reverted.");
                 break;
 
             default:
-                gameState.addEvent("UNDO: Action type not supported: " + action.getType());
+                gameState.addEvent("UNDO: Action type not supported.");
         }
     }
 
+    /**
+     * Re-applies the last undone action.
+     */
     public void redo() {
         if (redoStack.isEmpty()) {
             gameState.addEvent("REDO: No action to redo.");
@@ -143,52 +133,47 @@ public class UndoManager {
         switch (action.getType()) {
             case MONEY_CHANGE:
                 int diff = (Integer) action.getNewValue() - (Integer) action.getOldValue();
-                Player playerMoney = gameState.getPlayerById(action.getPlayerId());
-                if (playerMoney != null) {
-                    playerMoney.changeBalance(diff);
-                    gameState.updatePlayerRankings(playerMoney);
+                Player pMoney = gameState.getPlayerById(action.getPlayerId());
+                if (pMoney != null) {
+                    pMoney.changeBalance(diff);
                 }
-                gameState.addEvent("REDO: Money change re-applied: $" + diff);
+                gameState.addEvent("REDO: Money change re-applied.");
                 break;
 
             case MOVEMENT:
-                Player playerMove = gameState.getPlayerById(action.getPlayerId());
-                if (playerMove != null) {
-                    playerMove.setCurrentPosition((Integer) action.getNewValue());
-                    gameState.addEvent("REDO: Movement re-applied to position " + action.getNewValue());
+                Player pMove = gameState.getPlayerById(action.getPlayerId());
+                if (pMove != null) {
+                    pMove.setCurrentPosition((Integer) action.getNewValue());
                 }
+                gameState.addEvent("REDO: Movement re-applied.");
                 break;
 
             case PROPERTY_PURCHASE:
-                // خرید مجدد ملک
-                Player playerPurchase = gameState.getPlayerById(action.getPlayerId());
-                Property purchasedProp = gameState.getPropertyById(action.getTargetId());
-                if (playerPurchase != null && purchasedProp != null) {
-                    playerPurchase.changeBalance(-purchasedProp.getPurchasePrice());
-                    playerPurchase.addProperty(purchasedProp);
-                    purchasedProp.setOwner(playerPurchase.getPlayerId());
-                    gameState.updatePlayerRankings(playerPurchase);
-                    gameState.addEvent("REDO: Property purchase re-applied for " + purchasedProp.getName());
+                Player pPurchase = gameState.getPlayerById(action.getPlayerId());
+                Property prop = gameState.getPropertyById(action.getTargetId());
+                if (pPurchase != null && prop != null) {
+                    pPurchase.changeBalance(-prop.getPurchasePrice());
+                    pPurchase.addProperty(prop);
                 }
+                gameState.addEvent("REDO: Property purchase re-applied.");
                 break;
 
             case CONSTRUCTION:
-                Player playerBuild = gameState.getPlayerById(action.getPlayerId());
+                Player pBuild = gameState.getPlayerById(action.getPlayerId());
                 Property builtProp = gameState.getPropertyById(action.getTargetId());
-                if (playerBuild != null && builtProp != null) {
-                    playerBuild.changeBalance(-(Integer) action.getOldValue()); // کسر هزینه خانه
-                    if (action.getNewValue().equals(5)) { // اگر به هتل رسیده بود
+                if (pBuild != null && builtProp != null) {
+                    pBuild.changeBalance(-builtProp.getHouseCost());
+                    if (builtProp.getHouseCount() == 4) {
                         builtProp.addHotel();
                     } else {
                         builtProp.addHouse();
                     }
-                    gameState.updatePlayerRankings(playerBuild);
-                    gameState.addEvent("REDO: Construction re-applied on " + builtProp.getName());
                 }
+                gameState.addEvent("REDO: Construction re-applied.");
                 break;
 
             default:
-                gameState.addEvent("REDO: Action " + action.getType() + " re-applied.");
+                gameState.addEvent("REDO: Action re-applied.");
         }
     }
 }

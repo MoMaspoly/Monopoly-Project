@@ -4,99 +4,106 @@ import ir.monopoly.server.game.GameController;
 import ir.monopoly.server.game.GameInitializer;
 import ir.monopoly.server.game.GameState;
 import ir.monopoly.server.player.Player;
-import java.io.IOException;
-import java.net.ServerSocket;
-import java.net.Socket;
+import java.io.*;
+import java.net.*;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * The Master Server class.
+ * This version handles the full lifecycle: Connection -> Initialization -> Logic.
+ */
 public class GameServer {
 
     private static final int PORT = 8080;
-    private static final int MAX_PLAYERS = 4;
-
-    private ServerSocket serverSocket;
-    private final List<ClientHandler> clientHandlers = new ArrayList<>();
-
-    // لیست بازیکنان منطقی (Logic Players)
+    private final List<ClientHandler> clients = new ArrayList<>();
     private final List<Player> logicPlayers = new ArrayList<>();
-
     private GameState gameState;
     private GameController gameController;
+    private boolean gameStarted = false;
 
-    public GameServer() throws IOException {
-        serverSocket = new ServerSocket(PORT);
+    public void startServer() {
+        try (ServerSocket serverSocket = new ServerSocket(PORT)) {
+            System.out.println("SERVER: Monopoly Server started on port " + PORT);
+            System.out.println("SERVER: Waiting for 4 players to connect...");
+
+            while (clients.size() < 4) {
+                Socket socket = serverSocket.accept();
+                int playerId = clients.size() + 1;
+
+                // 1. Create Logic Player
+                Player newPlayer = new Player(playerId, "Player " + playerId, 1500);
+                logicPlayers.add(newPlayer);
+
+                // 2. Create Network Handler
+                ClientHandler handler = new ClientHandler(socket, playerId, this);
+                clients.add(handler);
+                handler.start();
+
+                System.out.println("SERVER: Player " + playerId + " connected. (" + clients.size() + "/4)");
+            }
+
+            // 3. All players connected -> Initialize Game Logic
+            initializeGameLogic();
+
+        } catch (IOException e) {
+            System.err.println("SERVER ERROR: " + e.getMessage());
+        }
     }
 
-    public void startServer() throws IOException {
-        System.out.println("=== Monopoly Server Started ===");
-        System.out.println("Waiting for " + MAX_PLAYERS + " players...");
+    private void initializeGameLogic() {
+        System.out.println("SERVER: All players joined. Initializing GameState...");
 
-        // مرحله ۱: اتصال بازیکنان
-        while (clientHandlers.size() < MAX_PLAYERS) {
-            Socket socket = serverSocket.accept();
-            int playerId = clientHandlers.size() + 1; // ID شبکه (1 تا 4)
+        // Use the GameInitializer to build the 40-tile board and deck
+        this.gameState = GameInitializer.initializeGame(logicPlayers);
+        this.gameController = new GameController(gameState, this);
+        this.gameStarted = true;
 
-            // ساخت هندلر شبکه
-            ClientHandler handler = new ClientHandler(socket, playerId, this);
-            clientHandlers.add(handler);
-            handler.start();
+        // 4. Notify all GUIs to start
+        broadcast("{\"type\":\"INFO\",\"message\":\"Game Started! Good luck!\"}");
 
-            // ساخت بازیکن منطقی (برای GameState)
-            // عدد 1500 همان Initial Balance است
-            logicPlayers.add(new Player(playerId, "Player " + playerId, 1500));
+        // Update first turn
+        int firstId = gameState.getTurnManager().getCurrentPlayer().getPlayerId();
+        broadcast("{\"type\":\"TURN_UPDATE\",\"currentPlayer\":" + firstId + "}");
 
-
-            System.out.println("Player " + playerId + " connected.");
-        }
-
-        // مرحله ۲: شروع منطق بازی (وقتی ۴ نفر تکمیل شدند)
-        System.out.println("All players connected. Initializing GameState...");
-
-        // استفاده از کد مهنا برای ساخت بازی
-        gameState = GameInitializer.initializeGame(logicPlayers);
-        gameController = new GameController(gameState, this);
-
-        // مرحله ۳: اعلام شروع به همه
-        broadcast("{\"type\":\"GAME_START\",\"message\":\"Game Initialized!\"}");
-
-        // اعلام نوبت نفر اول (چون GameState بازیکنان را شافل می‌کند، باید ببینیم نوبت کیست)
-        int firstPlayerId = gameState.getTurnManager().getCurrentPlayer().getPlayerId();
-        broadcast("{\"type\":\"TURN_UPDATE\",\"currentPlayer\":" + firstPlayerId + "}");
+        System.out.println("SERVER: Logic ready. First turn: Player " + firstId);
     }
 
     public synchronized void broadcast(String message) {
-        for (ClientHandler client : clientHandlers) {
-            if (client.isAlive()) client.sendMessage(message);
+        for (ClientHandler client : clients) {
+            client.sendMessage(message);
         }
     }
 
-    public void sendToPlayer(int targetPlayerId, String message) {
-        for (ClientHandler client : clientHandlers) {
-            if (client.getPlayerId() == targetPlayerId) {
+    public synchronized void sendToPlayer(int playerId, String message) {
+        for (ClientHandler client : clients) {
+            if (client.getPlayerId() == playerId) {
                 client.sendMessage(message);
-                return;
+                break;
             }
         }
     }
 
     public synchronized void removeClient(ClientHandler handler) {
-        clientHandlers.remove(handler);
+        clients.remove(handler);
     }
 
     public GameController getGameController() {
-        return gameController; // حالا ممکن است null باشد اگر بازی هنوز شروع نشده
+        return gameController;
     }
 
     public GameState getGameState() {
         return gameState;
     }
 
+    public boolean isGameStarted() {
+        return gameStarted;
+    }
+
+    /**
+     * Entry Point: Run this to start the backend.
+     */
     public static void main(String[] args) {
-        try {
-            new GameServer().startServer();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+        new GameServer().startServer();
     }
 }

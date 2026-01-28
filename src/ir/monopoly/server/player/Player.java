@@ -14,7 +14,6 @@ public class Player implements Comparable<Player> {
     private boolean hasChanceJailCard = false;
     private boolean hasCommunityJailCard = false;
     private PropertyTree ownedProperties;
-    private MyStack<String> actionHistory;
 
     public Player(int playerId, String name, int initialBalance) {
         this.playerId = playerId;
@@ -23,7 +22,16 @@ public class Player implements Comparable<Player> {
         this.currentPosition = 0;
         this.status = PlayerStatus.ACTIVE;
         this.ownedProperties = new PropertyTree();
-        this.actionHistory = new MyStack<>();
+    }
+
+    // --- Jail Logic ---
+    public void incrementJailTurns() { this.jailTurns++; }
+    public int getJailTurns() { return jailTurns; }
+    public void resetJailTurns() { this.jailTurns = 0; }
+
+    public void releaseFromJail() {
+        this.status = PlayerStatus.ACTIVE;
+        this.resetJailTurns();
     }
 
     public void addGetOutOfJailFreeCard(boolean isChance) {
@@ -31,30 +39,18 @@ public class Player implements Comparable<Player> {
         else hasCommunityJailCard = true;
     }
 
-    public boolean useGetOutOfJailFreeCard(boolean isChance) {
-        if (isChance && hasChanceJailCard) {
+    public boolean useJailCard() {
+        if (hasChanceJailCard) {
             hasChanceJailCard = false;
             return true;
-        } else if (!isChance && hasCommunityJailCard) {
+        } else if (hasCommunityJailCard) {
             hasCommunityJailCard = false;
             return true;
         }
         return false;
     }
 
-    public boolean hasGetOutOfJailFreeCard() {
-        return hasChanceJailCard || hasCommunityJailCard;
-    }
-
-    public void releaseFromJail() {
-        this.status = PlayerStatus.ACTIVE;
-        this.jailTurns = 0;
-    }
-
-    public int getJailTurns() { return jailTurns; }
-    public void incrementJailTurns() { this.jailTurns++; }
-    public void resetJailTurns() { this.jailTurns = 0; }
-
+    // --- Getters & Setters ---
     public int getPlayerId() { return playerId; }
     public String getName() { return name; }
     public int getBalance() { return balance; }
@@ -74,16 +70,6 @@ public class Player implements Comparable<Player> {
         ownedProperties.remove(propertyId);
     }
 
-    @Override
-    public int compareTo(Player other) {
-        return Integer.compare(this.getTotalWealth(), other.getTotalWealth());
-    }
-
-    @Override
-    public String toString() {
-        return name + " ($" + balance + ")";
-    }
-
     public int getTotalWealth() {
         final int[] sum = {0};
         ownedProperties.forEach(p -> {
@@ -91,5 +77,10 @@ public class Player implements Comparable<Player> {
             if (p.hasHotel()) sum[0] += p.getHouseCost();
         });
         return this.balance + sum[0];
+    }
+
+    @Override
+    public int compareTo(Player other) {
+        return Integer.compare(this.getTotalWealth(), other.getTotalWealth());
     }
 }
