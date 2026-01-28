@@ -32,17 +32,21 @@ public class MonopolyGUI extends Application {
     private boolean isMyTurn = false;
     private boolean auctionActive = false;
     private boolean awaitingBuyDecision = false;
+    private boolean inJail = false;
+    private int jailTurns = 0;
     private int currentBidderId = -1;
 
     // UI Components
     private Pane boardPane;
     private TextArea logArea;
-    private Label balanceLabel, playerInfoLabel, statusLabel, auctionStatusLabel;
+    private Label balanceLabel, playerInfoLabel, statusLabel, auctionStatusLabel, jailStatusLabel;
     private ListView<String> propertyList;
     private Button btnRoll, btnBuy, btnTrade, btnEndTurn, btnUndo, btnRedo, btnLeaderboard;
     private Button btnPass, btnBid;
+    private Button btnJailDouble, btnJailPay, btnJailCard;
     private TextField bidAmountField;
     private VBox auctionPanel;
+    private VBox jailPanel;
 
     private final Map<Integer, double[]> tileCoords = new HashMap<>();
     private final Map<Integer, Circle> playerTokens = new HashMap<>();
@@ -126,8 +130,46 @@ public class MonopolyGUI extends Application {
         balanceLabel.setTextFill(Color.DARKGREEN);
 
         propertyList = new ListView<>();
-        propertyList.setPrefHeight(150);
+        propertyList.setPrefHeight(120);
         propertyList.getItems().add("No properties owned");
+
+        // Jail Panel
+        jailStatusLabel = new Label("You are FREE!");
+        jailStatusLabel.setFont(Font.font("Arial", FontWeight.BOLD, 14));
+        jailStatusLabel.setTextFill(Color.DARKRED);
+
+        btnJailDouble = new Button("🎲 Try Double");
+        btnJailDouble.setStyle("-fx-background-color: #f39c12; -fx-text-fill: white; -fx-font-weight: bold;");
+        btnJailDouble.setOnAction(e -> {
+            // در زندان Roll = تلاش برای دوبل
+            client.sendMessage("ROLL");
+            hasRolledThisTurn = true;
+            updateControlStates();
+        });
+
+        btnJailPay = new Button("💰 Pay $50 Fine");
+        btnJailPay.setStyle("-fx-background-color: #27ae60; -fx-text-fill: white; -fx-font-weight: bold;");
+        btnJailPay.setOnAction(e -> {
+            // ارسال دستور پرداخت جریمه (در سرور با Roll مدیریت می‌شود)
+            client.sendMessage("ROLL");
+            hasRolledThisTurn = true;
+            updateControlStates();
+        });
+
+        btnJailCard = new Button("🃏 Use Jail Card");
+        btnJailCard.setStyle("-fx-background-color: #8e44ad; -fx-text-fill: white; -fx-font-weight: bold;");
+        btnJailCard.setOnAction(e -> {
+            // استفاده از کارت آزادی (نیاز به پیاده‌سازی در سرور دارد)
+            showAlert("Jail Card", "Use jail card feature needs server implementation");
+        });
+
+        HBox jailButtons = new HBox(10, btnJailDouble, btnJailPay, btnJailCard);
+        jailButtons.setAlignment(Pos.CENTER);
+
+        jailPanel = new VBox(10, jailStatusLabel, jailButtons);
+        jailPanel.setPadding(new Insets(10));
+        jailPanel.setStyle("-fx-background-color: rgba(255, 230, 230, 0.9); -fx-background-radius: 10; -fx-border-color: #c0392b; -fx-border-width: 2;");
+        jailPanel.setVisible(false);
 
         // Auction Panel
         auctionStatusLabel = new Label("No active auction");
@@ -166,7 +208,7 @@ public class MonopolyGUI extends Application {
         logArea = new TextArea();
         logArea.setEditable(false);
         logArea.setWrapText(true);
-        logArea.setPrefHeight(200);
+        logArea.setPrefHeight(150);
 
         statusLabel = new Label("Waiting for players...");
         statusLabel.setTextFill(Color.FIREBRICK);
@@ -179,6 +221,7 @@ public class MonopolyGUI extends Application {
 
         box.getChildren().addAll(playerInfoLabel, balanceLabel, new Separator(),
                 new Label("Properties:"), propertyList, new Separator(),
+                jailPanel, new Separator(),
                 auctionPanel, new Separator(),
                 btnLeaderboard, new Separator(), new Label("Log:"), logArea, statusLabel);
         return box;
@@ -200,11 +243,10 @@ public class MonopolyGUI extends Application {
         btnRoll.setOnAction(e -> {
             client.sendMessage("ROLL");
             hasRolledThisTurn = true;
-            btnRoll.setDisable(true);
+            updateControlStates();
         });
         btnBuy.setOnAction(e -> client.sendMessage("BUY"));
         btnTrade.setOnAction(e -> {
-            // Simple trade dialog
             TextInputDialog dialog = new TextInputDialog("50");
             dialog.setTitle("Trade Proposal");
             dialog.setHeaderText("Propose a Trade");
@@ -224,13 +266,7 @@ public class MonopolyGUI extends Application {
         btnEndTurn.setOnAction(e -> client.sendMessage("END_TURN"));
 
         // Initially disable buttons
-        btnRoll.setDisable(true);
-        btnBuy.setDisable(true);
-        btnUndo.setDisable(true);
-        btnRedo.setDisable(true);
-        btnEndTurn.setDisable(true);
-        btnBid.setDisable(true);
-        btnPass.setDisable(true);
+        updateControlStates();
 
         box.getChildren().addAll(btnRoll, btnBuy, btnTrade, btnUndo, btnRedo, btnEndTurn);
         return box;
@@ -252,10 +288,8 @@ public class MonopolyGUI extends Application {
                         int curr = Integer.parseInt(getJsonVal(json, "currentPlayer"));
                         isMyTurn = (curr == myPlayerId);
 
-                        // RE-ENABLE ROLL BUTTON FOR NEW TURN
                         if (isMyTurn) hasRolledThisTurn = false;
 
-                        // Enable/disable buttons based on turn
                         updateControlStates();
                         statusLabel.setText(isMyTurn ? "⭐ YOUR TURN" : "Wait for P" + curr);
 
@@ -266,12 +300,33 @@ public class MonopolyGUI extends Application {
                         int pos = Integer.parseInt(getJsonVal(json, "currentPosition"));
                         moveToken(pId, pos);
                         logArea.appendText("➤ Player " + pId + " moved to position " + pos + "\n");
+
+                        // اگر به زندان رفت (خانه 10)
+                        if (pId == myPlayerId && pos == 10 && inJail) {
+                            jailStatusLabel.setText("🔒 IN JAIL (Position: " + pos + ")");
+                        }
                     }
                     case "PLAYER_STATS" -> {
                         int playerId = Integer.parseInt(getJsonVal(json, "playerId"));
                         int balance = Integer.parseInt(getJsonVal(json, "balance"));
                         if (playerId == myPlayerId) {
                             balanceLabel.setText("💰 Balance: $" + balance);
+                        }
+                    }
+                    case "PLAYER_STATUS" -> {
+                        int playerId = Integer.parseInt(getJsonVal(json, "playerId"));
+                        String status = getJsonVal(json, "status");
+                        if (playerId == myPlayerId) {
+                            inJail = status.equals("IN_JAIL");
+                            jailTurns = Integer.parseInt(getJsonVal(json, "jailTurns"));
+
+                            if (inJail) {
+                                jailPanel.setVisible(true);
+                                jailStatusLabel.setText("🔒 IN JAIL - Turn " + jailTurns + "/3\nRoll doubles or pay $50 next turn!");
+                                updateControlStates();
+                            } else {
+                                jailPanel.setVisible(false);
+                            }
                         }
                     }
                     case "PROPERTY_LIST" -> {
@@ -290,7 +345,6 @@ public class MonopolyGUI extends Application {
 
                         awaitingBuyDecision = true;
 
-                        // Show buy offer dialog
                         Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
                         alert.setTitle("Buy Property");
                         alert.setHeaderText("Buy " + property + " for $" + price + "?");
@@ -335,7 +389,6 @@ public class MonopolyGUI extends Application {
                                 "\n👤 Current bidder: Player " + currentBidderId +
                                 "\n⏳ " + status);
 
-                        // Enable bid/pass if it's my turn in auction
                         boolean myAuctionTurn = (currentBidderId == myPlayerId);
                         btnBid.setDisable(!myAuctionTurn);
                         btnPass.setDisable(!myAuctionTurn);
@@ -390,8 +443,12 @@ public class MonopolyGUI extends Application {
 
                         if (text.contains("MONOPOLY LEADERBOARD") || text.contains("TOP 3 BY WEALTH")) {
                             showLeaderboardDialog(text);
-                        } else if (text.contains("AUCTION")) {
+                        } else if (text.contains("AUCTION") || text.contains("JAIL") || text.contains("Doubles")) {
                             logArea.appendText("➤ " + text + "\n");
+                            // اگر پیام مربوط به زندان است
+                            if (text.contains("IN_JAIL") || text.contains("Jail") || text.contains("Doubles")) {
+                                updateJailStatusFromMessage(text);
+                            }
                         } else {
                             logArea.appendText("➤ " + text + "\n");
                             Alert a = new Alert(Alert.AlertType.INFORMATION, text);
@@ -422,6 +479,19 @@ public class MonopolyGUI extends Application {
                 logArea.appendText("Raw JSON: " + json + "\n");
             }
         });
+    }
+
+    private void updateJailStatusFromMessage(String message) {
+        if (message.contains("IN_JAIL") || message.contains("sent to Jail")) {
+            inJail = true;
+            jailPanel.setVisible(true);
+            jailStatusLabel.setText("🔒 " + message);
+            updateControlStates();
+        } else if (message.contains("FREE") || message.contains("free") || message.contains("paid")) {
+            inJail = false;
+            jailPanel.setVisible(false);
+            updateControlStates();
+        }
     }
 
     private void updatePropertyList(String propertiesStr) {
@@ -473,13 +543,31 @@ public class MonopolyGUI extends Application {
     }
 
     private void updateControlStates() {
-        btnRoll.setDisable(!isMyTurn || hasRolledThisTurn || auctionActive);
-        btnBuy.setDisable(!isMyTurn || !awaitingBuyDecision);
+        boolean canRollNormal = isMyTurn && !hasRolledThisTurn && !auctionActive && !inJail;
+        boolean canRollInJail = isMyTurn && !hasRolledThisTurn && inJail;
+
+        btnRoll.setDisable(!canRollNormal && !canRollInJail);
+        btnBuy.setDisable(!isMyTurn || !awaitingBuyDecision || auctionActive || inJail);
+        btnTrade.setDisable(!isMyTurn || auctionActive || inJail);
         btnEndTurn.setDisable(!isMyTurn || auctionActive);
-        btnUndo.setDisable(!isMyTurn);
-        btnRedo.setDisable(!isMyTurn);
+        btnUndo.setDisable(!isMyTurn || auctionActive);
+        btnRedo.setDisable(!isMyTurn || auctionActive);
         btnBid.setDisable(!auctionActive);
         btnPass.setDisable(!auctionActive);
+
+        // Jail controls
+        btnJailDouble.setDisable(!canRollInJail);
+        btnJailPay.setDisable(!canRollInJail);
+        btnJailCard.setDisable(!canRollInJail);
+
+        // Update button texts based on jail status
+        if (inJail && isMyTurn) {
+            btnRoll.setText("🎲 TRY DOUBLE");
+            btnRoll.setStyle("-fx-background-color: #f39c12; -fx-text-fill: white; -fx-font-weight: bold; -fx-background-radius: 12;");
+        } else {
+            btnRoll.setText("🎲 ROLL");
+            btnRoll.setStyle("-fx-background-color: #D4AF37; -fx-text-fill: white; -fx-font-weight: bold; -fx-background-radius: 12;");
+        }
     }
 
     private String unescapeJson(String text) {

@@ -308,6 +308,7 @@ public class GameController {
         server.broadcast("{\"type\":\"EVENT_LOG\",\"message\":\"" + safeEvent + "\"}");
     }
 
+    // در GameController - به syncGameState() اضافه کنید:
     private void syncGameState() {
         Player currentP = gameState.getTurnManager().getCurrentPlayer();
         String event = gameState.getLastEvent();
@@ -318,11 +319,20 @@ public class GameController {
 
         for (Player p : gameState.getPlayers()) {
             server.broadcast("{\"type\":\"PLAYER_STATS\",\"playerId\":" + p.getPlayerId() + ",\"balance\":" + p.getBalance() + "}");
+
+            // ارسال وضعیت زندان
+            String status = p.getStatus().toString();
+            int jailTurns = p.getJailTurns();
+            server.sendToPlayer(p.getPlayerId(),
+                    "{\"type\":\"PLAYER_STATUS\",\"playerId\":" + p.getPlayerId() +
+                            ",\"status\":\"" + status +
+                            "\",\"jailTurns\":" + jailTurns + "}");
+
             sendPlayerProperties(p);
         }
 
         if (event.contains("ACTION_") || event.contains("CARD_DRAWN") ||
-                event.contains("AUCTION_")) {
+                event.contains("AUCTION_") || event.contains("JAIL")) {
             String cleanMsg = event.contains(":") ? event.split(":", 2)[1] : event;
             cleanMsg = escapeJson(cleanMsg);
             server.broadcast("{\"type\":\"SHOW_CARD\",\"text\":\"" + cleanMsg + "\"}");
