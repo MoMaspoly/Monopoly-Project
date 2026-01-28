@@ -20,6 +20,10 @@ import javafx.scene.text.FontWeight;
 import javafx.stage.Stage;
 import javafx.util.Duration;
 
+import javafx.stage.Screen;
+import javafx.geometry.Rectangle2D;
+
+
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.util.HashMap;
@@ -60,46 +64,84 @@ public class MonopolyGUI extends Application {
 
     @Override
     public void start(Stage primaryStage) {
+
         loadAssets();
 
-        BorderPane root = new BorderPane();
-        root.setPadding(new Insets(10));
+        // Root
+        VBox root = new VBox();
+        root.setSpacing(0);
 
-        // Background Setup
+        // Background
         if (bgImage != null) {
-            root.setBackground(new Background(new BackgroundImage(bgImage,
-                    BackgroundRepeat.NO_REPEAT, BackgroundRepeat.NO_REPEAT,
-                    BackgroundPosition.CENTER, new BackgroundSize(1.0, 1.0, true, true, false, true))));
-        } else {
-            root.setStyle("-fx-background-color: #0F3B2E;");
+            root.setBackground(new Background(new BackgroundImage(
+                    bgImage,
+                    BackgroundRepeat.NO_REPEAT,
+                    BackgroundRepeat.NO_REPEAT,
+                    BackgroundPosition.CENTER,
+                    new BackgroundSize(1, 1, true, true, false, true)
+            )));
         }
 
-        // Center: Board
+        // Board
         boardPane = new Pane();
         boardPane.setPrefSize(BOARD_SIZE, BOARD_SIZE);
-        boardPane.setStyle("-fx-background-color: rgba(253, 245, 230, 0.9); -fx-border-color: #D4AF37; -fx-border-width: 4; -fx-background-radius: 15;");
+        boardPane.setMinSize(BOARD_SIZE, BOARD_SIZE);
+        boardPane.setMaxSize(BOARD_SIZE, BOARD_SIZE);
+
+        boardPane.setStyle("""
+        -fx-background-color: rgba(253,245,230,0.9);
+        -fx-border-color: #D4AF37;
+        -fx-border-width: 4;
+        -fx-background-radius: 15;
+    """);
 
         drawFestiveBoard();
         addCenterArt();
         initTokens();
 
-        StackPane centerWrapper = new StackPane(boardPane);
-        centerWrapper.setPadding(new Insets(10));
-        root.setCenter(centerWrapper);
+        StackPane boardWrapper = new StackPane(boardPane);
+        boardWrapper.setAlignment(Pos.CENTER);
+        boardWrapper.setPadding(Insets.EMPTY);
 
-        // Right: Dashboard
-        root.setRight(createRightPanel());
+        // Right Panel
+        VBox rightPanel = createRightPanel();
 
-        // Bottom: Controls
-        root.setBottom(createControlPanel());
+        // Main Row
+        HBox mainRow = new HBox();
+        mainRow.setSpacing(0);
+        mainRow.setAlignment(Pos.CENTER_LEFT);
 
-        Scene scene = new Scene(root, 1180, 880);
+        // Spacer (برای پر کردن فضای خالی)
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+
+        HBox.setHgrow(boardWrapper, Priority.NEVER);
+        HBox.setHgrow(rightPanel, Priority.NEVER);
+
+        mainRow.getChildren().addAll(boardWrapper, spacer, rightPanel);
+
+        // Bottom Controls
+        HBox controls = createControlPanel();
+
+        VBox.setVgrow(mainRow, Priority.ALWAYS);
+
+        root.getChildren().addAll(mainRow, controls);
+
+        Rectangle2D screen = Screen.getPrimary().getVisualBounds();
+
+        double width = Math.min(1000, screen.getWidth() - 50);
+        double height = Math.min(850, screen.getHeight() - 50);
+
+        Scene scene = new Scene(root, width, height);
+
+
         primaryStage.setTitle("Monopoly Professional - Christmas Edition 🎄");
         primaryStage.setScene(scene);
         primaryStage.show();
 
         connectToServer();
     }
+
 
     private void loadAssets() {
         String path = "assets/";
