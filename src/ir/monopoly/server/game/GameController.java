@@ -19,19 +19,21 @@ public class GameController {
     public synchronized String handleCommand(String type, int pId, String extra) {
         Player player = gameState.getTurnManager().getCurrentPlayer();
 
-        // Only current player can act (except accepting a trade)
+        // فقط بازیکن فعلی اجازه دستور دادن دارد (بجز قبول کردن تجارت)
         if (player.getPlayerId() != pId && !type.equals("ACCEPT_TRADE")) {
-            return "{\"type\":\"ERROR\",\"message\":\"Wait your turn!\"}";
+            return "{\"type\":\"ERROR\",\"message\":\"Wait for your turn!\"}";
         }
 
         switch (type) {
-            case "ROLL" -> { return handleRoll(player); }
-            case "BUY" -> { return handleBuy(player); }
-            case "TRADE" -> { return handleTradeProposal(player, extra); }
-            case "ACCEPT_TRADE" -> { return handleAcceptTrade(pId); }
-            case "END_TURN" -> { return handleEndTurn(player); }
-            case "GET_TOP_K" -> { return "{\"type\":\"SHOW_CARD\",\"text\":\"" + LeaderboardManager.getTopKReport(gameState) + "\"}"; }
-            default -> { return "{\"type\":\"ERROR\",\"message\":\"Unknown Command\"}"; }
+            case "ROLL": return handleRoll(player);
+            case "BUY": return handleBuy(player);
+            case "TRADE": return handleTradeProposal(player, extra);
+            case "ACCEPT_TRADE": return handleAcceptTrade(pId);
+            case "END_TURN": return handleEndTurn(player);
+            case "GET_TOP_K": return "{\"type\":\"SHOW_CARD\",\"text\":\"" + LeaderboardManager.getTopKReport(gameState) + "\"}";
+            case "UNDO": gameState.getUndoManager().undo(); syncGameState(); return null;
+            case "REDO": gameState.getUndoManager().redo(); syncGameState(); return null;
+            default: return "{\"type\":\"ERROR\",\"message\":\"Unknown command\"}";
         }
     }
 
@@ -40,6 +42,7 @@ public class GameController {
         dice.roll();
         int total = dice.getSum();
 
+        // منطق زندان
         if (player.getStatus() == PlayerStatus.IN_JAIL) {
             if (dice.isDoubles()) {
                 player.releaseFromJail();
@@ -49,65 +52,49 @@ public class GameController {
                 if (player.getJailTurns() >= 3) {
                     player.changeBalance(-50);
                     player.releaseFromJail();
-                    server.broadcast("{\"type\":\"SHOW_CARD\",\"text\":\"Forced release! " + player.getName() + " paid $50 fine.\"}");
+                    server.broadcast("{\"type\":\"SHOW_CARD\",\"text\":\"3rd turn! " + player.getName() + " paid $50 fine and is free.\"}");
                 } else {
-                    server.broadcast("{\"type\":\"SHOW_CARD\",\"text\":\"" + player.getName() + " is still in Jail.\"}");
+                    server.broadcast("{\"type\":\"SHOW_CARD\",\"text\":\"" + player.getName() + " failed to roll doubles.\"}");
                     return null;
                 }
             }
         }
 
-        int newPos = (player.getCurrentPosition() + total) % 40;
+        // حرکت مهره بر اساس تاس
+        int oldPos = player.getCurrentPosition();
+        int newPos = (oldPos + total) % 40;
         player.setCurrentPosition(newPos);
+
         server.broadcast("{\"type\":\"ROLL_UPDATE\",\"playerId\":" + player.getPlayerId() + ",\"currentPosition\":" + newPos + "}");
 
-        TileResolver.resolveTile(gameState.getBoard().getTileAt(newPos), gameState);
+        // تحلیل مقصد
+        Tile tile = gameState.getBoard().getTileAt(newPos);
+        TileResolver.resolveTile(tile, gameState);
+
+        // همگام‌سازی وضعیت (از جمله جابه‌جایی‌های کارت)
         syncGameState();
         return null;
     }
 
-    private String handleEndTurn(Player p) {
-        Tile tile = gameState.getBoard().getTileAt(p.getCurrentPosition());
-        if (tile.getTileType() == TileType.PROPERTY) {
-            Property prop = (Property) tile.getTileData();
-            if (prop.getOwnerId() == null) {
-                processAuction(prop);
-            }
-        }
-        gameState.getTurnManager().passTurn();
-        server.broadcast("{\"type\":\"TURN_UPDATE\",\"currentPlayer\":" + gameState.getTurnManager().getCurrentPlayer().getPlayerId() + "}");
-        return null;
-    }
+    private void syncGameState() {
+        Player currentP = gameState.getTurnManager().getCurrentPlayer();
+        String event = gameState.getLastEvent();
 
-    private void processAuction(Property prop) {
-        Player winner = null;
-        int maxWealth = -1;
+        // اگر کارت مهره را جابه‌جا کرده باشد (مثل Advance to GO)، دستور حرکت مجدد صادر می‌شود
+        if (event.contains("GO") || event.contains("Jail") || event.contains("spaces")) {
+            server.broadcast("{\"type\":\"ROLL_UPDATE\",\"playerId\":" + currentP.getPlayerId() + ",\"currentPosition\":" + currentP.getCurrentPosition() + "}");
+        }
+
+        // بروزرسانی پول همه
         for (Player p : gameState.getPlayers()) {
-            if (p.getBalance() > maxWealth) {
-                maxWealth = p.getBalance();
-                winner = p;
-            }
+            server.broadcast("{\"type\":\"PLAYER_STATS\",\"playerId\":" + p.getPlayerId() + ",\"balance\":" + p.getBalance() + "}");
         }
-        if (winner != null && winner.getBalance() >= prop.getPurchasePrice() * 0.8) {
-            int bid = (int)(prop.getPurchasePrice() * 0.8);
-            winner.changeBalance(-bid);
-            winner.addProperty(prop);
-            server.broadcast("{\"type\":\"SHOW_CARD\",\"text\":\"AUCTION: " + winner.getName() + " won " + prop.getName() + " for $" + bid + "\"}");
+
+        // نمایش کارت یا پیام اکشن
+        if (event.contains("ACTION_") || event.contains("CARD_DRAWN")) {
+            String cleanMsg = event.contains(":") ? event.split(":", 2)[1] : event;
+            server.broadcast("{\"type\":\"SHOW_CARD\",\"text\":\"" + cleanMsg + "\"}");
         }
-    }
-
-    private String handleTradeProposal(Player sender, String extra) {
-        String[] parts = extra.split(" ");
-        int target = Integer.parseInt(parts[0]);
-        int cash = Integer.parseInt(parts[1]);
-        server.sendToPlayer(target, "{\"type\":\"TRADE_REQUEST\",\"from\":" + sender.getPlayerId() + ",\"cash\":" + cash + "}");
-        return "{\"type\":\"INFO\",\"message\":\"Trade proposal sent.\"}";
-    }
-
-    private String handleAcceptTrade(int playerId) {
-        TradeManager.acceptTrade(gameState);
-        syncGameState();
-        return null;
     }
 
     private String handleBuy(Player p) {
@@ -119,16 +106,26 @@ public class GameController {
                 return null;
             }
         }
-        return "{\"type\":\"ERROR\",\"message\":\"Purchase failed.\"}";
+        return "{\"type\":\"ERROR\",\"message\":\"Cannot buy.\"}";
     }
 
-    private void syncGameState() {
-        for (Player p : gameState.getPlayers()) {
-            server.broadcast("{\"type\":\"PLAYER_STATS\",\"playerId\":" + p.getPlayerId() + ",\"balance\":" + p.getBalance() + "}");
-        }
-        String event = gameState.getLastEvent();
-        if (event.contains("ACTION_")) {
-            server.broadcast("{\"type\":\"SHOW_CARD\",\"text\":\"" + event.split(":", 2)[1] + "\"}");
-        }
+    private String handleEndTurn(Player p) {
+        gameState.getTurnManager().passTurn();
+        int nextId = gameState.getTurnManager().getCurrentPlayer().getPlayerId();
+        server.broadcast("{\"type\":\"TURN_UPDATE\",\"currentPlayer\":" + nextId + "}");
+        return null;
+    }
+
+    private String handleTradeProposal(Player s, String e) {
+        String[] parts = e.split(" ");
+        int targetId = Integer.parseInt(parts[0]);
+        server.sendToPlayer(targetId, "{\"type\":\"TRADE_REQUEST\",\"from\":" + s.getPlayerId() + ",\"cash\":" + parts[1] + "}");
+        return null;
+    }
+
+    private String handleAcceptTrade(int pId) {
+        TradeManager.acceptTrade(gameState);
+        syncGameState();
+        return null;
     }
 }
