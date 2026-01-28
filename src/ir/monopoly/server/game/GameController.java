@@ -10,6 +10,8 @@ import ir.monopoly.server.property.Property;
 public class GameController {
     private final GameState gameState;
     private final GameServer server;
+    private boolean awaitingBuyDecision = false;
+    private Property propertyForSale = null;
 
     public GameController(GameState gameState, GameServer server) {
         this.gameState = gameState;
@@ -17,27 +19,41 @@ public class GameController {
     }
 
     public synchronized String handleCommand(String type, int pId, String extra) {
-        Player player = gameState.getTurnManager().getCurrentPlayer();
+        Player player = gameState.getPlayerById(pId);
+        if (player == null) {
+            return "{\"type\":\"ERROR\",\"message\":\"Player not found!\"}";
+        }
 
-        // فقط بازیکن فعلی اجازه دستور دادن دارد (بجز قبول کردن تجارت)
-        if (player.getPlayerId() != pId && !type.equals("ACCEPT_TRADE")) {
+        // بررسی مزایده فعال
+        if (gameState.isAuctionActive()) {
+            return handleAuctionCommand(type, pId, extra);
+        }
+
+        // بررسی ترید pending
+        if (type.equals("ACCEPT_TRADE") || type.equals("REJECT_TRADE")) {
+            return handleTradeCommand(type, pId, extra);
+        }
+
+        // بازیکن فعلی
+        Player currentPlayer = gameState.getTurnManager().getCurrentPlayer();
+
+        // فقط بازیکن فعلی اجازه دستور دادن دارد (بجز مزایده و ترید)
+        if (currentPlayer.getPlayerId() != pId && !type.equals("ACCEPT_TRADE") && !type.equals("REJECT_TRADE")) {
             return "{\"type\":\"ERROR\",\"message\":\"Wait for your turn!\"}";
         }
 
         switch (type) {
             case "ROLL": return handleRoll(player);
             case "BUY": return handleBuy(player);
+            case "PASS": return handlePass(player);
+            case "BID": return handleBid(player, extra);
             case "TRADE": return handleTradeProposal(player, extra);
             case "ACCEPT_TRADE": return handleAcceptTrade(pId);
+            case "REJECT_TRADE": return handleRejectTrade(pId);
             case "END_TURN": return handleEndTurn(player);
             case "GET_TOP_K":
                 String report = LeaderboardManager.getTopKReport(gameState);
-                // Escape JSON special characters
-                report = report.replace("\\", "\\\\")
-                        .replace("\"", "\\\"")
-                        .replace("\n", "\\n")
-                        .replace("\r", "\\r")
-                        .replace("\t", "\\t");
+                report = escapeJson(report);
                 return "{\"type\":\"SHOW_CARD\",\"text\":\"" + report + "\"}";
             case "UNDO":
                 boolean undone = gameState.getUndoManager().undo();
@@ -55,49 +71,95 @@ public class GameController {
         }
     }
 
-    /**
-     * Special sync for undo/redo operations
-     */
-    private void syncGameStateAfterUndoRedo() {
-        String lastEvent = gameState.getLastEvent();
+    private String handleAuctionCommand(String type, int pId, String extra) {
+        AuctionManager auction = gameState.getAuctionManager();
+        Player player = gameState.getPlayerById(pId);
 
-        // Update ALL players' stats (money might have changed)
-        for (Player p : gameState.getPlayers()) {
-            server.broadcast("{\"type\":\"PLAYER_STATS\",\"playerId\":" + p.getPlayerId() + ",\"balance\":" + p.getBalance() + "}");
+        if (auction == null || player == null) {
+            return "{\"type\":\"ERROR\",\"message\":\"No active auction!\"}";
         }
 
-        // Update ALL players' positions (in case of movement undo/redo)
-        for (Player p : gameState.getPlayers()) {
-            server.broadcast("{\"type\":\"ROLL_UPDATE\",\"playerId\":" + p.getPlayerId() + ",\"currentPosition\":" + p.getCurrentPosition() + "}");
-        }
+        switch (type) {
+            case "BID":
+                try {
+                    int amount = Integer.parseInt(extra.trim());
+                    if (auction.placeBid(player, amount)) {
+                        // Broadcast auction update
+                        broadcastAuctionStatus();
+                        gameState.addEvent("AUCTION_BID: " + player.getName() + " bid $" + amount);
+                        return null;
+                    } else {
+                        return "{\"type\":\"ERROR\",\"message\":\"Invalid bid! Must be higher than current bid and you must have enough money.\"}";
+                    }
+                } catch (NumberFormatException e) {
+                    return "{\"type\":\"ERROR\",\"message\":\"Invalid bid amount!\"}";
+                }
 
-        // Send event message
-        if (lastEvent.contains("UNDO:") || lastEvent.contains("REDO:")) {
-            String cleanMsg = lastEvent.contains(":") ? lastEvent.split(":", 2)[1] : lastEvent;
-            cleanMsg = cleanMsg.replace("\\", "\\\\")
-                    .replace("\"", "\\\"")
-                    .replace("\n", "\\n")
-                    .replace("\r", "\\r")
-                    .replace("\t", "\\t");
-            server.broadcast("{\"type\":\"SHOW_CARD\",\"text\":\"" + cleanMsg + "\"}");
-        }
+            case "PASS":
+                if (auction.passBid(player)) {
+                    broadcastAuctionStatus();
+                    gameState.addEvent("AUCTION_PASS: " + player.getName() + " passed");
 
-        // Send to log
-        String safeEvent = lastEvent.replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-                .replace("\t", "\\t");
-        server.broadcast("{\"type\":\"EVENT_LOG\",\"message\":\"" + safeEvent + "\"}");
+                    if (auction.isFinished()) {
+                        endAuction();
+                    }
+                    return null;
+                }
+                return "{\"type\":\"ERROR\",\"message\":\"Cannot pass!\"}";
+
+            default:
+                return "{\"type\":\"ERROR\",\"message\":\"Invalid command during auction!\"}";
+        }
+    }
+
+    private void broadcastAuctionStatus() {
+        AuctionManager auction = gameState.getAuctionManager();
+        if (auction != null) {
+            String status = auction.getAuctionStatus();
+            Property property = auction.getProperty();
+            Player currentBidder = auction.getCurrentBidder();
+
+            String json = "{\"type\":\"AUCTION_UPDATE\",\"property\":\"" + escapeJson(property.getName()) +
+                    "\",\"currentBid\":" + auction.getCurrentHighestBid() +
+                    ",\"currentBidder\":" + (currentBidder != null ? currentBidder.getPlayerId() : -1) +
+                    ",\"status\":\"" + escapeJson(status) + "\"}";
+            server.broadcast(json);
+        }
+    }
+
+    private void endAuction() {
+        AuctionManager auction = gameState.getAuctionManager();
+        if (auction != null) {
+            Property property = auction.getProperty();
+            Player winner = auction.getCurrentWinner();
+            int winningBid = auction.getCurrentHighestBid();
+
+            if (winner != null) {
+                // Record transaction for Top-K
+                gameState.getTransactionGraph().recordTransaction(winner.getPlayerId(), 0, winningBid); // 0 = bank
+
+                // Add event
+                gameState.addEvent("AUCTION_WON: " + winner.getName() + " won " + property.getName() + " for $" + winningBid);
+            }
+
+            // Broadcast auction end
+            server.broadcast("{\"type\":\"AUCTION_END\",\"winner\":" + (winner != null ? winner.getPlayerId() : -1) +
+                    ",\"property\":\"" + escapeJson(property.getName()) + "\",\"amount\":" + winningBid + "}");
+
+            gameState.endAuction();
+            syncGameState();
+        }
     }
 
     private String handleRoll(Player player) {
+        // اگر مزایده فعال است، نمی‌توان Roll زد
+        if (gameState.isAuctionActive()) {
+            return "{\"type\":\"ERROR\",\"message\":\"Finish the auction first!\"}";
+        }
+
         Dice dice = new Dice();
         dice.roll();
         int total = dice.getSum();
-
-        // ثبت action برای حرکت (قبل از تغییر)
-        int oldPosition = player.getCurrentPosition();
 
         // منطق زندان
         if (player.getStatus() == PlayerStatus.IN_JAIL) {
@@ -107,7 +169,6 @@ public class GameController {
             } else {
                 player.incrementJailTurns();
                 if (player.getJailTurns() >= 3) {
-                    // ثبت action برای پرداخت جریمه
                     int oldBalance = player.getBalance();
                     player.changeBalance(-50);
                     gameState.getUndoManager().recordAction(new GameAction(
@@ -117,7 +178,6 @@ public class GameController {
                             player.getBalance(),
                             -1
                     ));
-
                     player.releaseFromJail();
                     server.broadcast("{\"type\":\"SHOW_CARD\",\"text\":\"3rd turn! " + player.getName() + " paid $50 fine and is free.\"}");
                 } else {
@@ -127,7 +187,7 @@ public class GameController {
             }
         }
 
-        // حرکت مهره بر اساس تاس
+        int oldPosition = player.getCurrentPosition();
         int newPos = (oldPosition + total) % 40;
         player.setCurrentPosition(newPos);
 
@@ -146,73 +206,170 @@ public class GameController {
         Tile tile = gameState.getBoard().getTileAt(newPos);
         TileResolver.resolveTile(tile, gameState);
 
-        // همگام‌سازی وضعیت (از جمله جابه‌جایی‌های کارت)
+        // اگر روی ملک بدون مالک فرود آمد
+        if (tile.getTileType() == TileType.PROPERTY) {
+            Property prop = (Property) tile.getTileData();
+            if (prop.getOwnerId() == null) {
+                propertyForSale = prop;
+                awaitingBuyDecision = true;
+
+                // به بازیکن گزینه خرید بده
+                String message = "You landed on " + prop.getName() + ". Price: $" + prop.getPurchasePrice() +
+                        ". Your balance: $" + player.getBalance() +
+                        ". Do you want to buy?";
+                server.sendToPlayer(player.getPlayerId(),
+                        "{\"type\":\"BUY_OFFER\",\"property\":\"" + escapeJson(prop.getName()) +
+                                "\",\"price\":" + prop.getPurchasePrice() +
+                                ",\"message\":\"" + escapeJson(message) + "\"}");
+            }
+        }
+
         syncGameState();
         return null;
+    }
+
+    private String handleBuy(Player player) {
+        if (!awaitingBuyDecision || propertyForSale == null) {
+            return "{\"type\":\"ERROR\",\"message\":\"No property to buy!\"}";
+        }
+
+        if (player.getBalance() >= propertyForSale.getPurchasePrice()) {
+            int oldBalance = player.getBalance();
+
+            if (PropertyService.buyProperty(player, propertyForSale, gameState)) {
+                gameState.getUndoManager().recordAction(new GameAction(
+                        GameAction.ActionType.PROPERTY_PURCHASE,
+                        player.getPlayerId(),
+                        oldBalance,
+                        player.getBalance(),
+                        propertyForSale.getPropertyId()
+                ));
+
+                awaitingBuyDecision = false;
+                propertyForSale = null;
+                syncGameState();
+                return null;
+            }
+        }
+
+        // اگر پول کافی ندارد یا خرید نکرد، مزایده شروع شود
+        return handlePass(player);
+    }
+
+    private String handlePass(Player player) {
+        if (awaitingBuyDecision && propertyForSale != null) {
+            // شروع مزایده
+            gameState.startAuction(propertyForSale);
+            awaitingBuyDecision = false;
+
+            // Broadcast شروع مزایده
+            broadcastAuctionStatus();
+            server.broadcast("{\"type\":\"AUCTION_START\",\"property\":\"" + escapeJson(propertyForSale.getName()) +
+                    "\",\"minBid\":10,\"message\":\"Auction started for " + escapeJson(propertyForSale.getName()) + "\"}");
+
+            propertyForSale = null;
+            return null;
+        }
+
+        return "{\"type\":\"ERROR\",\"message\":\"Nothing to pass!\"}";
+    }
+
+    private String handleBid(Player player, String amountStr) {
+        // این فقط برای زمانی است که مستقیماً BID فرستاده شود (نه در مزایده)
+        return "{\"type\":\"ERROR\",\"message\":\"No active auction! Use PASS to start auction.\"}";
+    }
+
+    /**
+     * Special sync for undo/redo operations
+     */
+    private void syncGameStateAfterUndoRedo() {
+        String lastEvent = gameState.getLastEvent();
+
+        // Update ALL players' stats
+        for (Player p : gameState.getPlayers()) {
+            server.broadcast("{\"type\":\"PLAYER_STATS\",\"playerId\":" + p.getPlayerId() + ",\"balance\":" + p.getBalance() + "}");
+            sendPlayerProperties(p);
+        }
+
+        // Update ALL players' positions
+        for (Player p : gameState.getPlayers()) {
+            server.broadcast("{\"type\":\"ROLL_UPDATE\",\"playerId\":" + p.getPlayerId() + ",\"currentPosition\":" + p.getCurrentPosition() + "}");
+        }
+
+        // Send event message
+        if (lastEvent.contains("UNDO:") || lastEvent.contains("REDO:")) {
+            String cleanMsg = lastEvent.contains(":") ? lastEvent.split(":", 2)[1] : lastEvent;
+            cleanMsg = escapeJson(cleanMsg);
+            server.broadcast("{\"type\":\"SHOW_CARD\",\"text\":\"" + cleanMsg + "\"}");
+        }
+
+        // Send to log
+        String safeEvent = escapeJson(lastEvent);
+        server.broadcast("{\"type\":\"EVENT_LOG\",\"message\":\"" + safeEvent + "\"}");
     }
 
     private void syncGameState() {
         Player currentP = gameState.getTurnManager().getCurrentPlayer();
         String event = gameState.getLastEvent();
 
-        // اگر کارت مهره را جابه‌جا کرده باشد (مثل Advance to GO)، دستور حرکت مجدد صادر می‌شود
         if (event.contains("GO") || event.contains("Jail") || event.contains("spaces")) {
             server.broadcast("{\"type\":\"ROLL_UPDATE\",\"playerId\":" + currentP.getPlayerId() + ",\"currentPosition\":" + currentP.getCurrentPosition() + "}");
         }
 
-        // بروزرسانی پول همه
         for (Player p : gameState.getPlayers()) {
             server.broadcast("{\"type\":\"PLAYER_STATS\",\"playerId\":" + p.getPlayerId() + ",\"balance\":" + p.getBalance() + "}");
+            sendPlayerProperties(p);
         }
 
-        // نمایش کارت یا پیام اکشن
-        if (event.contains("ACTION_") || event.contains("CARD_DRAWN")) {
+        if (event.contains("ACTION_") || event.contains("CARD_DRAWN") ||
+                event.contains("AUCTION_")) {
             String cleanMsg = event.contains(":") ? event.split(":", 2)[1] : event;
-            cleanMsg = cleanMsg.replace("\\", "\\\\")
-                    .replace("\"", "\\\"")
-                    .replace("\n", "\\n")
-                    .replace("\r", "\\r")
-                    .replace("\t", "\\t");
+            cleanMsg = escapeJson(cleanMsg);
             server.broadcast("{\"type\":\"SHOW_CARD\",\"text\":\"" + cleanMsg + "\"}");
         }
 
-        // ارسال لاگ رویداد
         if (!event.isEmpty() && !event.equals("Game Started")) {
-            String safeEvent = event.replace("\\", "\\\\")
-                    .replace("\"", "\\\"")
-                    .replace("\n", "\\n")
-                    .replace("\r", "\\r")
-                    .replace("\t", "\\t");
+            String safeEvent = escapeJson(event);
             server.broadcast("{\"type\":\"EVENT_LOG\",\"message\":\"" + safeEvent + "\"}");
         }
     }
 
-    private String handleBuy(Player p) {
-        Tile tile = gameState.getBoard().getTileAt(p.getCurrentPosition());
-        if (tile.getTileType() == TileType.PROPERTY) {
-            Property prop = (Property) tile.getTileData();
+    // متد جدید: ارسال لیست املاک بازیکن
+    private void sendPlayerProperties(Player player) {
+        StringBuilder propertiesList = new StringBuilder();
 
-            // ثبت action برای خرید (قبل از انجام)
-            int oldBalance = p.getBalance();
+        player.getOwnedProperties().forEach(property -> {
+            if (propertiesList.length() > 0) propertiesList.append("|");
+            propertiesList.append(property.getName())
+                    .append(",").append(property.getColorGroup())
+                    .append(",").append(property.getHouseCount())
+                    .append(",").append(property.hasHotel())
+                    .append(",").append(property.isMortgaged())
+                    .append(",").append(property.getPurchasePrice());
+        });
 
-            if (PropertyService.buyProperty(p, prop, gameState)) {
-                // ثبت action خرید
-                gameState.getUndoManager().recordAction(new GameAction(
-                        GameAction.ActionType.PROPERTY_PURCHASE,
-                        p.getPlayerId(),
-                        oldBalance,
-                        p.getBalance(),
-                        prop.getPropertyId()
-                ));
+        String propertiesStr = escapeJson(propertiesList.toString());
 
-                syncGameState();
-                return null;
-            }
-        }
-        return "{\"type\":\"ERROR\",\"message\":\"Cannot buy.\"}";
+        server.sendToPlayer(player.getPlayerId(),
+                "{\"type\":\"PROPERTY_LIST\",\"playerId\":" + player.getPlayerId() +
+                        ",\"properties\":\"" + propertiesStr + "\"}");
+    }
+
+    // متد کمکی برای escape کردن JSON
+    private String escapeJson(String text) {
+        if (text == null) return "";
+        return text.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
     }
 
     private String handleEndTurn(Player p) {
+        if (gameState.isAuctionActive()) {
+            return "{\"type\":\"ERROR\",\"message\":\"Finish the auction first!\"}";
+        }
+
         gameState.getTurnManager().passTurn();
         int nextId = gameState.getTurnManager().getCurrentPlayer().getPlayerId();
         server.broadcast("{\"type\":\"TURN_UPDATE\",\"currentPlayer\":" + nextId + "}");
@@ -222,7 +379,13 @@ public class GameController {
     private String handleTradeProposal(Player s, String e) {
         String[] parts = e.split(" ");
         int targetId = Integer.parseInt(parts[0]);
-        server.sendToPlayer(targetId, "{\"type\":\"TRADE_REQUEST\",\"from\":" + s.getPlayerId() + ",\"cash\":" + parts[1] + "}");
+        int cashAmount = Integer.parseInt(parts[1]);
+
+        server.sendToPlayer(targetId,
+                "{\"type\":\"TRADE_REQUEST\",\"from\":" + s.getPlayerId() +
+                        ",\"fromName\":\"" + escapeJson(s.getName()) +
+                        "\",\"cash\":" + cashAmount +
+                        ",\"message\":\"" + escapeJson(s.getName() + " offers $" + cashAmount + " for a property") + "\"}");
         return null;
     }
 
@@ -230,5 +393,21 @@ public class GameController {
         TradeManager.acceptTrade(gameState);
         syncGameState();
         return null;
+    }
+
+    private String handleRejectTrade(int pId) {
+        TradeManager.rejectTrade(gameState);
+        gameState.addEvent("TRADE_REJECTED: Trade was rejected.");
+        syncGameState();
+        return null;
+    }
+
+    private String handleTradeCommand(String type, int pId, String extra) {
+        if (type.equals("ACCEPT_TRADE")) {
+            return handleAcceptTrade(pId);
+        } else if (type.equals("REJECT_TRADE")) {
+            return handleRejectTrade(pId);
+        }
+        return "{\"type\":\"ERROR\",\"message\":\"Invalid trade command!\"}";
     }
 }

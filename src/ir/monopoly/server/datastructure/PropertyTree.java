@@ -1,6 +1,8 @@
 package ir.monopoly.server.datastructure;
 
 import ir.monopoly.server.property.Property;
+import java.util.ArrayList;
+import java.util.List;
 
 public class PropertyTree {
     private Node root;
@@ -35,14 +37,18 @@ public class PropertyTree {
     }
 
     public void forEach(java.util.function.Consumer<Property> action) {
-        forEachRecursive(root, action);
+        List<Property> allProperties = new ArrayList<>();
+        collectAllProperties(root, allProperties);
+        for (Property prop : allProperties) {
+            action.accept(prop);
+        }
     }
 
-    private void forEachRecursive(Node current, java.util.function.Consumer<Property> action) {
+    private void collectAllProperties(Node current, List<Property> properties) {
         if (current != null) {
-            forEachRecursive(current.left, action);
-            action.accept(current.property);
-            forEachRecursive(current.right, action);
+            collectAllProperties(current.left, properties);
+            properties.add(current.property);
+            collectAllProperties(current.right, properties);
         }
     }
 
@@ -73,5 +79,14 @@ public class PropertyTree {
 
     public boolean isEmpty() {
         return root == null;
+    }
+
+    public int size() {
+        return countSize(root);
+    }
+
+    private int countSize(Node node) {
+        if (node == null) return 0;
+        return 1 + countSize(node.left) + countSize(node.right);
     }
 }

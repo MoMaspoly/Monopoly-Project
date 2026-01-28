@@ -29,13 +29,20 @@ public class MonopolyGUI extends Application {
     private NetworkClient client;
     private int myPlayerId = -1;
     private boolean hasRolledThisTurn = false;
+    private boolean isMyTurn = false;
+    private boolean auctionActive = false;
+    private boolean awaitingBuyDecision = false;
+    private int currentBidderId = -1;
 
     // UI Components
     private Pane boardPane;
     private TextArea logArea;
-    private Label balanceLabel, playerInfoLabel, statusLabel;
+    private Label balanceLabel, playerInfoLabel, statusLabel, auctionStatusLabel;
     private ListView<String> propertyList;
     private Button btnRoll, btnBuy, btnTrade, btnEndTurn, btnUndo, btnRedo, btnLeaderboard;
+    private Button btnPass, btnBid;
+    private TextField bidAmountField;
+    private VBox auctionPanel;
 
     private final Map<Integer, double[]> tileCoords = new HashMap<>();
     private final Map<Integer, Circle> playerTokens = new HashMap<>();
@@ -119,17 +126,52 @@ public class MonopolyGUI extends Application {
         balanceLabel.setTextFill(Color.DARKGREEN);
 
         propertyList = new ListView<>();
-        propertyList.setPrefHeight(200);
+        propertyList.setPrefHeight(150);
+        propertyList.getItems().add("No properties owned");
+
+        // Auction Panel
+        auctionStatusLabel = new Label("No active auction");
+        auctionStatusLabel.setFont(Font.font("Arial", FontWeight.BOLD, 14));
+        auctionStatusLabel.setTextFill(Color.PURPLE);
+        auctionStatusLabel.setWrapText(true);
+
+        bidAmountField = new TextField();
+        bidAmountField.setPromptText("Bid amount");
+        bidAmountField.setPrefWidth(100);
+
+        btnBid = new Button("💵 BID");
+        btnBid.setStyle("-fx-background-color: #27ae60; -fx-text-fill: white; -fx-font-weight: bold;");
+        btnBid.setOnAction(e -> {
+            try {
+                int amount = Integer.parseInt(bidAmountField.getText());
+                client.sendMessage("BID " + amount);
+                bidAmountField.clear();
+            } catch (NumberFormatException ex) {
+                showAlert("Invalid Bid", "Please enter a valid number!");
+            }
+        });
+
+        btnPass = new Button("⏭ PASS");
+        btnPass.setStyle("-fx-background-color: #e74c3c; -fx-text-fill: white; -fx-font-weight: bold;");
+        btnPass.setOnAction(e -> client.sendMessage("PASS"));
+
+        HBox auctionControls = new HBox(10, bidAmountField, btnBid, btnPass);
+        auctionControls.setAlignment(Pos.CENTER);
+
+        auctionPanel = new VBox(10, auctionStatusLabel, auctionControls);
+        auctionPanel.setPadding(new Insets(10));
+        auctionPanel.setStyle("-fx-background-color: rgba(255, 255, 200, 0.8); -fx-background-radius: 10; -fx-border-color: #9b59b6; -fx-border-width: 2;");
+        auctionPanel.setVisible(false);
 
         logArea = new TextArea();
         logArea.setEditable(false);
         logArea.setWrapText(true);
-        logArea.setPrefHeight(250);
+        logArea.setPrefHeight(200);
 
         statusLabel = new Label("Waiting for players...");
         statusLabel.setTextFill(Color.FIREBRICK);
 
-        // Add Leaderboard button to right panel
+        // Add Leaderboard button
         btnLeaderboard = new Button("🏆 LEADERBOARD");
         btnLeaderboard.setStyle("-fx-background-color: #9b59b6; -fx-text-fill: white; -fx-font-weight: bold; -fx-background-radius: 10;");
         btnLeaderboard.setMaxWidth(Double.MAX_VALUE);
@@ -137,6 +179,7 @@ public class MonopolyGUI extends Application {
 
         box.getChildren().addAll(playerInfoLabel, balanceLabel, new Separator(),
                 new Label("Properties:"), propertyList, new Separator(),
+                auctionPanel, new Separator(),
                 btnLeaderboard, new Separator(), new Label("Log:"), logArea, statusLabel);
         return box;
     }
@@ -160,14 +203,34 @@ public class MonopolyGUI extends Application {
             btnRoll.setDisable(true);
         });
         btnBuy.setOnAction(e -> client.sendMessage("BUY"));
-        btnTrade.setOnAction(e -> { /* Trade Dialog Logic */ });
+        btnTrade.setOnAction(e -> {
+            // Simple trade dialog
+            TextInputDialog dialog = new TextInputDialog("50");
+            dialog.setTitle("Trade Proposal");
+            dialog.setHeaderText("Propose a Trade");
+            dialog.setContentText("Enter cash amount to offer:");
+            dialog.showAndWait().ifPresent(amount -> {
+                TextInputDialog targetDialog = new TextInputDialog("2");
+                targetDialog.setTitle("Trade Target");
+                targetDialog.setHeaderText("Select Trade Partner");
+                targetDialog.setContentText("Enter target player ID (2, 3, or 4):");
+                targetDialog.showAndWait().ifPresent(target -> {
+                    client.sendMessage("TRADE " + target + " " + amount);
+                });
+            });
+        });
         btnUndo.setOnAction(e -> client.sendMessage("UNDO"));
         btnRedo.setOnAction(e -> client.sendMessage("REDO"));
         btnEndTurn.setOnAction(e -> client.sendMessage("END_TURN"));
 
-        // Initially disable Undo/Redo until it's our turn
+        // Initially disable buttons
+        btnRoll.setDisable(true);
+        btnBuy.setDisable(true);
         btnUndo.setDisable(true);
         btnRedo.setDisable(true);
+        btnEndTurn.setDisable(true);
+        btnBid.setDisable(true);
+        btnPass.setDisable(true);
 
         box.getChildren().addAll(btnRoll, btnBuy, btnTrade, btnUndo, btnRedo, btnEndTurn);
         return box;
@@ -187,18 +250,14 @@ public class MonopolyGUI extends Application {
                     }
                     case "TURN_UPDATE" -> {
                         int curr = Integer.parseInt(getJsonVal(json, "currentPlayer"));
-                        boolean isMe = (curr == myPlayerId);
+                        isMyTurn = (curr == myPlayerId);
 
                         // RE-ENABLE ROLL BUTTON FOR NEW TURN
-                        if (isMe) hasRolledThisTurn = false;
+                        if (isMyTurn) hasRolledThisTurn = false;
 
                         // Enable/disable buttons based on turn
-                        btnRoll.setDisable(!isMe || hasRolledThisTurn);
-                        btnBuy.setDisable(!isMe);
-                        btnUndo.setDisable(!isMe);  // Only active player can undo
-                        btnRedo.setDisable(!isMe);  // Only active player can redo
-                        btnEndTurn.setDisable(!isMe);
-                        statusLabel.setText(isMe ? "⭐ YOUR TURN" : "Wait for P" + curr);
+                        updateControlStates();
+                        statusLabel.setText(isMyTurn ? "⭐ YOUR TURN" : "Wait for P" + curr);
 
                         logArea.appendText("➤ Turn: Player " + curr + "\n");
                     }
@@ -215,39 +274,137 @@ public class MonopolyGUI extends Application {
                             balanceLabel.setText("💰 Balance: $" + balance);
                         }
                     }
+                    case "PROPERTY_LIST" -> {
+                        int playerId = Integer.parseInt(getJsonVal(json, "playerId"));
+                        if (playerId == myPlayerId) {
+                            String propertiesStr = getJsonVal(json, "properties");
+                            propertiesStr = unescapeJson(propertiesStr);
+                            updatePropertyList(propertiesStr);
+                        }
+                    }
+                    case "BUY_OFFER" -> {
+                        String property = getJsonVal(json, "property");
+                        int price = Integer.parseInt(getJsonVal(json, "price"));
+                        String offerMsg = getJsonVal(json, "message");
+                        offerMsg = unescapeJson(offerMsg);
+
+                        awaitingBuyDecision = true;
+
+                        // Show buy offer dialog
+                        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+                        alert.setTitle("Buy Property");
+                        alert.setHeaderText("Buy " + property + " for $" + price + "?");
+                        alert.setContentText(offerMsg);
+
+                        ButtonType buyButton = new ButtonType("Buy");
+                        ButtonType auctionButton = new ButtonType("Start Auction");
+                        ButtonType cancelButton = new ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE);
+
+                        alert.getButtonTypes().setAll(buyButton, auctionButton, cancelButton);
+
+                        alert.showAndWait().ifPresent(response -> {
+                            if (response == buyButton) {
+                                client.sendMessage("BUY");
+                            } else if (response == auctionButton) {
+                                client.sendMessage("PASS");
+                            }
+                            awaitingBuyDecision = false;
+                            updateControlStates();
+                        });
+
+                        updateControlStates();
+                    }
+                    case "AUCTION_START" -> {
+                        String property = getJsonVal(json, "property");
+                        auctionActive = true;
+                        auctionPanel.setVisible(true);
+                        auctionStatusLabel.setText("🎪 Auction started for: " + property + "\nMin bid: $" + getJsonVal(json, "minBid"));
+
+                        updateControlStates();
+                        logArea.appendText("➤ Auction started for " + property + "\n");
+                    }
+                    case "AUCTION_UPDATE" -> {
+                        String property = getJsonVal(json, "property");
+                        int currentBid = Integer.parseInt(getJsonVal(json, "currentBid"));
+                        currentBidderId = Integer.parseInt(getJsonVal(json, "currentBidder"));
+                        String status = getJsonVal(json, "status");
+                        status = unescapeJson(status);
+
+                        auctionStatusLabel.setText("🏷️ " + property +
+                                "\n💰 Current bid: $" + currentBid +
+                                "\n👤 Current bidder: Player " + currentBidderId +
+                                "\n⏳ " + status);
+
+                        // Enable bid/pass if it's my turn in auction
+                        boolean myAuctionTurn = (currentBidderId == myPlayerId);
+                        btnBid.setDisable(!myAuctionTurn);
+                        btnPass.setDisable(!myAuctionTurn);
+                        bidAmountField.setDisable(!myAuctionTurn);
+
+                        if (myAuctionTurn) {
+                            bidAmountField.setPromptText("Min: $" + (currentBid + 1));
+                        }
+                    }
+                    case "AUCTION_END" -> {
+                        int winnerId = Integer.parseInt(getJsonVal(json, "winner"));
+                        String property = getJsonVal(json, "property");
+                        int amount = Integer.parseInt(getJsonVal(json, "amount"));
+
+                        auctionActive = false;
+                        auctionPanel.setVisible(false);
+                        currentBidderId = -1;
+
+                        updateControlStates();
+
+                        if (winnerId > 0) {
+                            logArea.appendText("➤ Player " + winnerId + " won " + property + " for $" + amount + "\n");
+                            showAlert("Auction Ended", "Player " + winnerId + " won " + property + " for $" + amount);
+                        } else {
+                            logArea.appendText("➤ Auction for " + property + " ended with no winner\n");
+                        }
+                    }
+                    case "TRADE_REQUEST" -> {
+                        int fromId = Integer.parseInt(getJsonVal(json, "from"));
+                        String fromName = getJsonVal(json, "fromName");
+                        fromName = unescapeJson(fromName);
+                        int cash = Integer.parseInt(getJsonVal(json, "cash"));
+                        String tradeMsg = getJsonVal(json, "message");
+                        tradeMsg = unescapeJson(tradeMsg);
+
+                        Alert tradeAlert = new Alert(Alert.AlertType.CONFIRMATION);
+                        tradeAlert.setTitle("Trade Request");
+                        tradeAlert.setHeaderText("Trade Offer from " + fromName);
+                        tradeAlert.setContentText(tradeMsg + "\n\nDo you accept?");
+
+                        tradeAlert.showAndWait().ifPresent(response -> {
+                            if (response == ButtonType.OK) {
+                                client.sendMessage("ACCEPT_TRADE");
+                            } else {
+                                client.sendMessage("REJECT_TRADE");
+                            }
+                        });
+                    }
                     case "SHOW_CARD" -> {
                         String text = getJsonVal(json, "text");
-                        // Unescape JSON string
-                        text = text.replace("\\n", "\n")
-                                .replace("\\r", "\r")
-                                .replace("\\t", "\t")
-                                .replace("\\\"", "\"")
-                                .replace("\\\\", "\\");
+                        text = unescapeJson(text);
 
-                        // اگر متن Leaderboard باشد، در Alert بزرگتر نشان می‌دهیم
                         if (text.contains("MONOPOLY LEADERBOARD") || text.contains("TOP 3 BY WEALTH")) {
                             showLeaderboardDialog(text);
+                        } else if (text.contains("AUCTION")) {
+                            logArea.appendText("➤ " + text + "\n");
                         } else {
-                            logArea.appendText("➤ Card: " + text + "\n");
+                            logArea.appendText("➤ " + text + "\n");
                             Alert a = new Alert(Alert.AlertType.INFORMATION, text);
-                            a.setHeaderText("Card Draw");
+                            a.setHeaderText("Game Event");
                             a.show();
                         }
                     }
                     case "EVENT_LOG" -> {
-                        String unescapedMsg = msg.replace("\\n", "\n")
-                                .replace("\\r", "\r")
-                                .replace("\\t", "\t")
-                                .replace("\\\"", "\"")
-                                .replace("\\\\", "\\");
+                        String unescapedMsg = unescapeJson(msg);
                         logArea.appendText("➤ " + unescapedMsg + "\n");
                     }
                     case "ERROR" -> {
-                        String unescapedMsg = msg.replace("\\n", "\n")
-                                .replace("\\r", "\r")
-                                .replace("\\t", "\t")
-                                .replace("\\\"", "\"")
-                                .replace("\\\\", "\\");
+                        String unescapedMsg = unescapeJson(msg);
                         logArea.appendText("❌ Error: " + unescapedMsg + "\n");
                         Alert a = new Alert(Alert.AlertType.ERROR, unescapedMsg);
                         a.setHeaderText("Error");
@@ -255,11 +412,7 @@ public class MonopolyGUI extends Application {
                     }
                     default -> {
                         if (!msg.isEmpty()) {
-                            String unescapedMsg = msg.replace("\\n", "\n")
-                                    .replace("\\r", "\r")
-                                    .replace("\\t", "\t")
-                                    .replace("\\\"", "\"")
-                                    .replace("\\\\", "\\");
+                            String unescapedMsg = unescapeJson(msg);
                             logArea.appendText("➤ " + unescapedMsg + "\n");
                         }
                     }
@@ -269,6 +422,81 @@ public class MonopolyGUI extends Application {
                 logArea.appendText("Raw JSON: " + json + "\n");
             }
         });
+    }
+
+    private void updatePropertyList(String propertiesStr) {
+        propertyList.getItems().clear();
+
+        if (propertiesStr == null || propertiesStr.isEmpty() || propertiesStr.equals("null")) {
+            propertyList.getItems().add("No properties owned");
+            return;
+        }
+
+        String[] properties = propertiesStr.split("\\|");
+
+        for (String prop : properties) {
+            String[] parts = prop.split(",");
+            if (parts.length >= 6) {
+                try {
+                    String name = parts[0];
+                    String color = parts[1];
+                    int houses = Integer.parseInt(parts[2]);
+                    boolean hotel = Boolean.parseBoolean(parts[3]);
+                    boolean mortgaged = Boolean.parseBoolean(parts[4]);
+                    int price = Integer.parseInt(parts[5]);
+
+                    StringBuilder display = new StringBuilder();
+                    display.append("🏠 ").append(name);
+                    display.append(" (").append(color).append(")");
+                    display.append(" - $").append(price);
+
+                    if (hotel) {
+                        display.append(" 🏨");
+                    } else if (houses > 0) {
+                        display.append(" 🏠×").append(houses);
+                    }
+
+                    if (mortgaged) {
+                        display.append(" ⚠️");
+                    }
+
+                    propertyList.getItems().add(display.toString());
+                } catch (NumberFormatException e) {
+                    propertyList.getItems().add("Error: " + prop);
+                }
+            }
+        }
+
+        if (propertyList.getItems().isEmpty()) {
+            propertyList.getItems().add("No properties owned");
+        }
+    }
+
+    private void updateControlStates() {
+        btnRoll.setDisable(!isMyTurn || hasRolledThisTurn || auctionActive);
+        btnBuy.setDisable(!isMyTurn || !awaitingBuyDecision);
+        btnEndTurn.setDisable(!isMyTurn || auctionActive);
+        btnUndo.setDisable(!isMyTurn);
+        btnRedo.setDisable(!isMyTurn);
+        btnBid.setDisable(!auctionActive);
+        btnPass.setDisable(!auctionActive);
+    }
+
+    private String unescapeJson(String text) {
+        if (text == null) return "";
+        return text.replace("\\n", "\n")
+                .replace("\\r", "\r")
+                .replace("\\t", "\t")
+                .replace("\\\"", "\"")
+                .replace("\\\\", "\\");
+    }
+
+    private void showAlert(String title, String message) {
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.setTitle(title);
+        alert.setHeaderText(null);
+        alert.setContentText(message);
+        alert.showAndWait();
     }
 
     private void showLeaderboardDialog(String leaderboardText) {
@@ -349,8 +577,10 @@ public class MonopolyGUI extends Application {
     }
 
     private Image getIconForTile(int i) {
-        if (i == 0) return iconCache.get("go"); if (i == 10) return iconCache.get("jail");
-        if (i == 20) return iconCache.get("parking"); if (i == 30) return iconCache.get("gotojail");
+        if (i == 0) return iconCache.get("go");
+        if (i == 10) return iconCache.get("jail");
+        if (i == 20) return iconCache.get("parking");
+        if (i == 30) return iconCache.get("gotojail");
         if (i == 2 || i == 17 || i == 33) return iconCache.get("chest");
         if (i == 7 || i == 22 || i == 36) return iconCache.get("chance");
         if (i == 4 || i == 38) return iconCache.get("tax");

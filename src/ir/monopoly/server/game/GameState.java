@@ -3,7 +3,7 @@ package ir.monopoly.server.game;
 import ir.monopoly.server.board.Board;
 import ir.monopoly.server.player.Player;
 import ir.monopoly.server.property.Property;
-import ir.monopoly.server.datastructure.TransactionGraph; // Ensure this exists
+import ir.monopoly.server.datastructure.TransactionGraph;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -20,6 +20,7 @@ public class GameState {
     private final TransactionGraph transactionGraph;
     private final List<String> eventLog;
     private TradeOffer pendingTrade;
+    private AuctionManager auctionManager;
 
     public GameState(Player[] players, Board board) {
         this.players = players;
@@ -33,6 +34,37 @@ public class GameState {
     }
 
     /**
+     * Starts an auction for a property
+     */
+    public void startAuction(Property property) {
+        this.auctionManager = new AuctionManager(property, players);
+        addEvent("AUCTION_STARTED: Auction for " + property.getName() + " started. Minimum bid: $10");
+    }
+
+    /**
+     * Ends current auction
+     */
+    public void endAuction() {
+        if (auctionManager != null) {
+            auctionManager.forceEndAuction();
+            Property property = auctionManager.getProperty();
+            Player winner = auctionManager.getCurrentWinner();
+            if (winner != null) {
+                addEvent("AUCTION_ENDED: " + winner.getName() + " won " + property.getName() + " for $" + auctionManager.getCurrentHighestBid());
+            }
+            auctionManager = null;
+        }
+    }
+
+    public boolean isAuctionActive() {
+        return auctionManager != null && auctionManager.isAuctionActive();
+    }
+
+    public AuctionManager getAuctionManager() {
+        return auctionManager;
+    }
+
+    /**
      * Adds a new event to the log.
      * Used by TileResolver to trigger GUI updates.
      */
@@ -43,7 +75,6 @@ public class GameState {
 
     /**
      * Retrieves the most recent event.
-     * Fixed the 'Cannot resolve' error.
      */
     public String getLastEvent() {
         if (eventLog.isEmpty()) return "";
@@ -58,7 +89,6 @@ public class GameState {
     }
 
     public Property getPropertyById(int id) {
-        // Searches the board for a tile with the matching ID
         var tile = board.getTileAt(id);
         if (tile != null && tile.getTileData() instanceof Property) {
             return (Property) tile.getTileData();
