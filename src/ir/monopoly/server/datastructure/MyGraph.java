@@ -24,4 +24,40 @@ public class MyGraph {
         Integer weight = neighbors.get(to);
         return weight == null ? 0 : weight;
     }
+
+    /**
+     * Get all neighbors (player IDs) of a given player.
+     */
+    public MyHashTable.Entry<Integer, Integer>[] getNeighbors(int playerId) {
+        MyHashTable<Integer, Integer> neighbors = adjList.get(playerId);
+        if (neighbors == null) return new MyHashTable.Entry[0];
+        return neighbors.getAllEntries();
+    }
+
+    /**
+     * Check if there is any edge from player A to player B.
+     */
+    public boolean hasEdge(int from, int to) {
+        return getWeight(from, to) > 0;
+    }
+
+    /**
+     * For debugging: print all edges.
+     */
+    public String printGraph() {
+        StringBuilder sb = new StringBuilder();
+        MyHashTable.Entry<Integer, MyHashTable<Integer, Integer>>[] allEntries = adjList.getAllEntries();
+        for (MyHashTable.Entry<Integer, MyHashTable<Integer, Integer>> entry : allEntries) {
+            int from = entry.key;
+            MyHashTable<Integer, Integer> neighbors = entry.value;
+            MyHashTable.Entry<Integer, Integer>[] neighborEntries = neighbors.getAllEntries();
+            for (MyHashTable.Entry<Integer, Integer> neighbor : neighborEntries) {
+                int to = neighbor.key;
+                int weight = neighbor.value;
+                sb.append("Player ").append(from).append(" -> Player ").append(to)
+                        .append(" : $").append(weight).append("\n");
+            }
+        }
+        return sb.toString();
+    }
 }
