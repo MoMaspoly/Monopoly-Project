@@ -1,6 +1,6 @@
 package ir.monopoly.server.game;
 
-import ir.monopoly.server.datastructure.MyHeap;
+import ir.monopoly.server.datastructure.PlayerMaxHeap;
 import ir.monopoly.server.player.Player;
 
 public class LeaderboardManager {
@@ -43,7 +43,8 @@ public class LeaderboardManager {
     }
 
     private static String getTopByWealth(GameState gameState) {
-        MyHeap<Player> maxHeap = new MyHeap<>(true);
+        // استفاده از PlayerMaxHeap دستی به جای MyHeap عمومی
+        PlayerMaxHeap maxHeap = new PlayerMaxHeap(gameState.getPlayers().length);
         StringBuilder sb = new StringBuilder();
 
         for (Player p : gameState.getPlayers()) {
@@ -53,14 +54,14 @@ public class LeaderboardManager {
         }
 
         int count = 1;
-        while (!maxHeap.isEmpty() && count <= 3) {
-            Player p = maxHeap.extract();
-            if (p != null) {
-                sb.append(count).append(". ").append(p.getName())
-                        .append(" - Total: $").append(p.getTotalWealth())
-                        .append(" (Cash: $").append(p.getBalance()).append(")\n");
-                count++;
-            }
+        // استخراج سه بازیکن ثروتمند اول
+        while (count <= 3) {
+            Player p = maxHeap.extractMax();
+            if (p == null) break;
+            sb.append(count).append(". ").append(p.getName())
+                    .append(" - Total: $").append(p.getTotalWealth())
+                    .append(" (Cash: $").append(p.getBalance()).append(")\n");
+            count++;
         }
 
         if (sb.length() == 0) {

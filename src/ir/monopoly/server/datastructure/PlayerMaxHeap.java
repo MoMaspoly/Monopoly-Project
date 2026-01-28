@@ -66,6 +66,20 @@ public class PlayerMaxHeap {
     }
 
     private int getWealth(Player p) {
-        return p.getBalance();
+        return p.getTotalWealth();
+    }
+
+    // متدهای جدید برای کامل‌تر شدن کلاس
+    public boolean isEmpty() {
+        return size == 0;
+    }
+
+    public int getSize() {
+        return size;
+    }
+
+    public Player peekMax() {
+        if (size == 0) return null;
+        return heap[0];
     }
 }
