@@ -18,7 +18,6 @@ public class UndoManager {
 
     public void recordAction(GameAction action) {
         undoStack.push(action);
-        // Once a new action is taken, redo history is invalidated
         while (!redoStack.isEmpty()) {
             redoStack.pop();
         }
